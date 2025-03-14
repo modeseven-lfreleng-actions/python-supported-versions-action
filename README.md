@@ -3,47 +3,75 @@
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 -->
 
-# 🛠️ Template Action
+# 🐍 Extract Python Versions Supported by Project
 
-This is a template for the other actions in this repository.
+Parses pyproject.toml and extracts the Python versions supported by the
+project. Determines the most recent version supported and provides JSON
+representing all supported versions, for use in GitHub matrix jobs.
 
-## actions-template
+## python-supported-versions-action
 
 ## Usage Example
 
 <!-- markdownlint-disable MD046 -->
 
 ```yaml
-steps:
-  - name: "Action template"
-    id: action-template
-    uses: lfreleng-actions/actions-template@main
-    with:
-      input: "placeholder"
+  - name: "Get project supported Python versions"
+    uses: lfreleng-actions/python-supported-versions-action@main
 ```
 
 <!-- markdownlint-enable MD046 -->
-
-## Inputs
-
-<!-- markdownlint-disable MD013 -->
-
-| Variable Name | Required | Description  |
-| ------------- | -------- | ------------ |
-| INPUT         | False    | Action input |
-
-<!-- markdownlint-enable MD013 -->
 
 ## Outputs
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name | Description   |
-| ------------- | ------------- |
-| OUTPUT        | Action output |
+| Variable Name | Description                                             |
+| ------------- | ------------------------------------------------------- |
+| BUILD_PYTHON  | Most recent Python version supported by project         |
+| MATRIX_JSON   | All Python versions supported by project as JSON string |
 
 <!-- markdownlint-enable MD013 -->
 
+## Workflow Output Example
+
+For a Python project with the content below in its pyproject.toml file:
+
+```console
+requires-python = "<3.13,>=3.10"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["Python", "Tool"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Unix",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.10",
+]
+```
+
+A workflow calling this action will produce the output below:
+
+```console
+Build Python: 3.12 💬
+Matrix JSON: {"python-version": ["3.10","3.11","3.12"]}
+```
+
 ## Implementation Details
 
-## Other Notes
+This action produces output by parsing the lines containing:
+
+```console
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.10",
+```
+
+This may be different from other tooling that parses the pyproject.toml file
+for information, such as GitHub's actions/setup-python. That appears to use
+the "requires-python" string. Parsing that would require logic beyond the
+current scope of this action, but may be desirable to improve behavioural
+consistency.
