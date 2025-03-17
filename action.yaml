@@ -35,7 +35,7 @@ runs:
     - name: "Check for: pyproject.toml"
       id: path-check
       # yamllint disable-line rule:line-length
-      uses: lfit/releng-reusable-workflows/.github/actions/path-check-action@11530dee75e77f063c6e01ac7f3a6cb0cdc95db7 # 2025-02-05
+      uses: lfit/releng-reusable-workflows/.github/actions/path-check-action@9b845102d5158f0b80bd53405a0b6855b26dc4a0 # 2025-02-05
       with:
         path: "${{ inputs.path_prefix }}pyproject.toml"
 
@@ -50,7 +50,7 @@ runs:
     - name: "Extract supported Python versions"
       id: capture-versions
       # yamllint disable-line rule:line-length
-      uses: lfit/releng-reusable-workflows/.github/actions/file-grep-regex-action@0b3caf21542fc99480016a2c3759264807880bff # 2025-01-30
+      uses: lfit/releng-reusable-workflows/.github/actions/file-grep-regex-action@9b845102d5158f0b80bd53405a0b6855b26dc4a0 # 2025-01-30
       with:
         flags: "-oP"
         # https://regex101.com/r/0mhOlr/1
