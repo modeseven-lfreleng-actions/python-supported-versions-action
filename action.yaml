@@ -14,11 +14,11 @@ description: "Returns Python version(s) for build and JSON for matrix jobs"
 # Extracted <3.13,>=3.10 from pyproject.toml
 
 inputs:
+  # Mandatory
   PATH_PREFIX:
     description: "Directory location containing project code"
     type: string
     required: false
-    default: ""
 
 outputs:
   BUILD_PYTHON:
@@ -32,12 +32,31 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: "Setup action/environment"
+      shell: bash
+      run: |
+        # Setup action/environment
+        # Handle path_prefix input consistently and when absent
+        path_prefix="${{ inputs.PATH_PREFIX }}"
+        if [ -z "$path_prefix" ]; then
+          # Set current directory as path prefix
+          path_prefix="."
+        else
+          # Strip any trailing slash in provided path
+          path_prefix="${path_prefix%/}"
+        fi
+        # Verify is a valid directory path
+        if [ ! -d "$path_prefix" ]; then
+          echo "Error: invalid path/prefix to project directory ❌"; exit 1
+        fi
+        echo "path_prefix=$path_prefix" >> "$GITHUB_ENV"
+
     - name: "Check for: pyproject.toml"
       id: path-check
       # yamllint disable-line rule:line-length
       uses: lfreleng-actions/path-check-action@7f728b8ac404d3309cfa576f0ffc54217ade2faa # v0.1.1
       with:
-        path: "${{ inputs.path_prefix }}pyproject.toml"
+        path: "${{ env.path_prefix }}/pyproject.toml"
 
     - name: "Error: missing pyproject.toml file"
       if: steps.path-check.outputs.type != 'file'
@@ -57,7 +76,7 @@ runs:
         # Only matches explicit/full Python versions
         # Those with major/minor versions, e.g. 3.10, 3.11
         regex: '(?<="Programming Language :: Python :: ).*\..*(?=")'
-        filename: "${{ inputs.path_prefix }}pyproject.toml"
+        filename: "${{ env.path_prefix }}/pyproject.toml"
 
     - id: parse
       name: "Process and transform extracted string"
