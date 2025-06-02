@@ -69,7 +69,7 @@ runs:
     - name: "Extract supported Python versions"
       id: capture-versions
       # yamllint disable-line rule:line-length
-      uses: lfreleng-actions/file-grep-regex-action@e065e0d8edca06116113b652b077053c1f7056a0 # v0.1.2
+      uses: lfreleng-actions/file-grep-regex-action@64fbf6bd3315530c6819e16c5b065e3bfc4f16d9 # v0.1.3
       with:
         flags: "-oP"
         # https://regex101.com/r/0mhOlr/1
