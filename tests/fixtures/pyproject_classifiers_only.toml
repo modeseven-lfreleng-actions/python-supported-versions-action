@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: Classifiers-only method (no requires-python)
+# TEST_TYPE: classifiers-only
+# SHOULD_FAIL: false
+# EXPECTED_MIN_VERSION: 3.10
+# EXPECTED_VERSIONS_COUNT: 3
+# DESCRIPTION: Tests fallback to classifiers when no requires-python is present
+
+[project]
+name = "test-classifiers-only"
+version = "1.0.0"
+description = "Test project with only classifiers (no requires-python)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["Python", "Tool"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Unix",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.10",
+]

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: No Python information (should fail)
+# TEST_TYPE: error-case
+# SHOULD_FAIL: true
+# EXPECTED_ERROR: No Python versions found
+# DESCRIPTION: Tests failure when no Python version information is available
+
+[project]
+name = "test-no-python-info"
+version = "1.0.0"
+description = "Test project with no Python version information (should fail)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["Python", "Tool"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Unix",
+]
