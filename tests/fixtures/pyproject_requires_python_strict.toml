@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: Strict requires-python constraint (>=3.12)
+# TEST_TYPE: requires-python
+# SHOULD_FAIL: false
+# EXPECTED_MIN_VERSION: 3.12
+# EXPECTED_VERSIONS_COUNT: 2
+# DESCRIPTION: Tests strict >=3.12 constraint limiting to newer versions
+
+[project]
+name = "test-requires-python-strict"
+version = "1.0.0"
+description = "Test project with strict requires-python constraint"
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["Python", "Tool"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Unix",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+]

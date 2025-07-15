@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: Inclusive upper bound constraint (>=3.10,<=3.12)
+# TEST_TYPE: requires-python
+# SHOULD_FAIL: false
+# EXPECTED_MIN_VERSION: 3.10
+# EXPECTED_VERSIONS_COUNT: 3
+# DESCRIPTION: Tests constraint with inclusive upper bound using <= operator
+
+[project]
+name = "test-inclusive-constraint"
+version = "1.0.0"
+description = "Test project with inclusive upper bound constraint"
+requires-python = ">=3.10,<=3.12"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["Python", "Tool"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: Unix",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
