@@ -18,18 +18,15 @@ inputs:
   # Mandatory
   path_prefix:
     description: "Directory location containing project code"
-    # type: string
     required: false
   network_timeout:
     description: "Network timeout in seconds for API calls"
     required: false
-    # type: number
-    default: "10"
+    default: '10'
   max_retries:
     description: "Maximum number of retry attempts for API calls"
     required: false
-    # type: number
-    default: "2"
+    default: '2'
 
 outputs:
   build_python:
