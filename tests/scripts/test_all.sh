@@ -38,15 +38,12 @@ source "$ACTION_DIR/lib/eol_utils.sh"
 source "$ACTION_DIR/lib/constraint_utils.sh"
 
 # Cleanup function
+# shellcheck disable=SC2329  # Invoked by trap cleanup EXIT
 cleanup() {
-    # shellcheck disable=SC2317  # Function is called via trap
     if [ -f "$TESTS_DIR/pyproject.toml" ]; then
-        # shellcheck disable=SC2317  # Function is called via trap
         rm -f "$TESTS_DIR/pyproject.toml"
     fi
-    # shellcheck disable=SC2317  # Function is called via trap
     # Clean up any temporary files
-    # shellcheck disable=SC2317  # Function is called via trap
     find "$TESTS_DIR" -name "*.tmp" -delete 2>/dev/null || true
 }
 trap cleanup EXIT
