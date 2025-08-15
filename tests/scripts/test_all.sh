@@ -38,6 +38,7 @@ source "$ACTION_DIR/lib/eol_utils.sh"
 source "$ACTION_DIR/lib/constraint_utils.sh"
 
 # Cleanup function
+# shellcheck disable=SC2329 # Incorrectly flagged; is called by trap
 cleanup() {
     # shellcheck disable=SC2317  # Function is called via trap
     if [ -f "$TESTS_DIR/pyproject.toml" ]; then

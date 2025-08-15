@@ -43,6 +43,7 @@ runs:
     - name: "Setup and validate environment"
       shell: "bash"
       run: |
+        set -x
         # Setup and validate environment
         path_prefix="${{ inputs.path_prefix }}"
         path_prefix="${path_prefix:-'.'}"
@@ -66,6 +67,7 @@ runs:
     - name: "Fetch supported Python versions with EOL awareness"
       shell: "bash"
       run: |
+        set -x
         # Fetch supported Python versions with EOL awareness
         set -o pipefail
 
@@ -98,6 +100,7 @@ runs:
     - name: "Extract Python version constraints"
       shell: "bash"
       run: |
+        set -x
         # Extract Python version constraints from pyproject.toml
         PYPROJECT_FILE="${{ env.path_prefix }}/pyproject.toml"
 
@@ -131,6 +134,7 @@ runs:
       name: "Process and determine supported Python versions"
       shell: "bash"
       run: |
+        set -x
         # Process and transform extracted Python versions using shared utilities
         set -o pipefail
 

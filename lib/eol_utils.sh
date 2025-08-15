@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 
+set -x
+
 # Shared utility functions for End-of-Life (EOL) API operations
 # This script provides common functionality used by both the main action
 # and test scripts to avoid code duplication.
