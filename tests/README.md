@@ -8,6 +8,10 @@
 This directory contains the comprehensive test suite for the
 `python-supported-versions-action` with EOL-aware dynamic version fetching.
 
+This test suite includes Poetry support.
+It extracts and normalizes constraints in `[tool.poetry.dependencies].python`
+(supports ^, ~=, and ==X.Y.*) and handles `requires-python`.
+
 ## Test Structure
 
 A single consolidated test script performs all tests.
@@ -34,7 +38,10 @@ metadata:
   requires-python)
 - `pyproject_classifiers_fallback.toml` - Fallback to classifiers method
 - `pyproject_no_python_info.toml` - No Python version information (error case)
-- `pyproject_unsupported_constraint.toml` - Unsupported constraint format
+- `pyproject_unsupported_constraint.toml` - Compatible release `~=3.10.0` (now supported)
+- `pyproject_poetry_caret.toml` - Poetry caret constraint `^3.10`
+- `pyproject_poetry_compatible.toml` - Poetry compatible release `~=3.11`
+- `pyproject_poetry_exact.toml` - Poetry exact pin `==3.12`
 
 ### Test Metadata Format
 
@@ -43,12 +50,19 @@ Each fixture file contains embedded test metadata in comments:
 ```toml
 # TEST_METADATA:
 # TEST_NAME: Basic requires-python constraint (>=3.10)
-# TEST_TYPE: requires-python
+# TEST_TYPE: requires-python|poetry-requires-python|classifiers|error-case
 # SHOULD_FAIL: false
 # EXPECTED_MIN_VERSION: 3.10
 # EXPECTED_VERSIONS_COUNT: 4
 # DESCRIPTION: Tests basic >=3.10 constraint with dynamic EOL-aware filtering
 ```
+
+Supported optional expectations:
+
+- `EXPECTED_EXACT_VERSION`: the resolved set contains one version
+  (and the build version matches it)
+- `EXPECTED_MIN_VERSION`: the first/lowest resolved version
+- `EXPECTED_VERSIONS_COUNT`: number of resolved versions
 
 ### Single Test Entry Point
 
@@ -58,6 +72,7 @@ Each fixture file contains embedded test metadata in comments:
   - Tests EOL-aware version filtering
   - Tests network fallback mechanisms
   - Validates all scenarios with detailed reporting
+  - Enforces metadata expectations when present (exact/min/count)
 
 ## Running Tests
 
@@ -75,6 +90,8 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 1. **External Repository Test** - Tests against a real external Python project
 2. **Comprehensive Test Suite** - Runs `scripts/test_all.sh` for complete coverage
 3. **Missing pyproject.toml Test** - Tests error handling for missing files
+4. **Poetry Fixtures Test** - Runs the action against Poetry-based fixtures
+   (offline mode) and asserts outputs
 
 ## Key Features Tested
 
@@ -83,6 +100,8 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 - ✅ Basic requires-python constraints (`>=`, `>`, `==`)
 - ✅ Complex requires-python constraints with different conditions
 - ✅ Exact version constraints
+- ✅ Poetry projects via `[tool.poetry.dependencies].python`
+- ✅ PEP 440 and Poetry operators: `~=`, `^`, `==X.Y.*`
 - ✅ Classifiers scenarios (fallback method)
 - ✅ Mixed version scenarios (conflicts between requires-python and classifiers)
 - ✅ Error handling and edge cases
@@ -140,7 +159,7 @@ To add a new test case:
    ```toml
    # TEST_METADATA:
    # TEST_NAME: Your test description
-   # TEST_TYPE: requires-python|classifiers|error-case
+   # TEST_TYPE: requires-python|poetry-requires-python|classifiers|error-case
    # SHOULD_FAIL: true|false
    # EXPECTED_MIN_VERSION: 3.10 (optional)
    # EXPECTED_EXACT_VERSION: 3.11 (optional)
@@ -165,6 +184,7 @@ The single test suite provides comprehensive coverage of:
 
 - **Fixture-based tests** covering all major scenarios
 - **EOL awareness validation** ensuring security compliance
+- **Poetry constraint extraction and normalization**
 - **Network resilience testing** for air-gapped environments
 - **Data-driven approach** making it easy to add new test cases
 - **Self-documenting fixtures** with embedded metadata

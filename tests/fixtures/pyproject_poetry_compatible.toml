@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: Poetry compatible release constraint (~=3.11)
+# TEST_TYPE: poetry-requires-python
+# SHOULD_FAIL: false
+# EXPECTED_EXACT_VERSION: 3.11
+# EXPECTED_VERSIONS_COUNT: 1
+# DESCRIPTION: Tests Poetry compatible release (~=) extraction via [tool.poetry.dependencies].python and normalization to >=3.11,<3.12 resulting in only 3.11
+
+[tool.poetry]
+name = "test-poetry-compatible"
+version = "1.0.0"
+description = "Test project with Poetry compatible release constraint for Python"
+authors = ["LF RelEng <releng@example.org>"]
+license = "Apache-2.0"
+
+[tool.poetry.dependencies]
+# This compatible release constraint should resolve to Python 3.11 only (>=3.11,<3.12)
+python = "~=3.11"
+tomli = "^2.0.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

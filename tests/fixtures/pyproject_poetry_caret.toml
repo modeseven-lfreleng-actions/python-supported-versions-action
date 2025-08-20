@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: Poetry caret constraint (^3.10)
+# TEST_TYPE: poetry-requires-python
+# SHOULD_FAIL: false
+# EXPECTED_MIN_VERSION: 3.10
+# EXPECTED_VERSIONS_COUNT: 4
+# DESCRIPTION: Tests Poetry caret constraint extraction via [tool.poetry.dependencies].python and normalization to >=3.10,<4.0
+
+[tool.poetry]
+name = "test-poetry-caret"
+version = "1.0.0"
+description = "Test project with Poetry caret constraint for Python"
+authors = ["LF RelEng <releng@example.org>"]
+license = "Apache-2.0"
+
+[tool.poetry.dependencies]
+# This caret constraint should resolve to Python 3.10, 3.11, 3.12, 3.13
+python = "^3.10"
+tomli = "^2.0.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

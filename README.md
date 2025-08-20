@@ -18,14 +18,17 @@ compatibility with projects that use explicit version classifiers.
 
 **Dynamic Version Detection with EOL Awareness**: The action automatically
 fetches the latest supported Python versions from official sources, filtering
-out end-of-life (EOL) versions to ensure supported Python
-versions get used. This provides up-to-date, secure version information
-without manual updates. Falls back to static definitions when network access
-is unavailable.
+out end-of-life (EOL) versions to ensure projects use supported Python versions.
+This provides up-to-date, secure version information without manual updates.
+If the network call fails, the action will continue with a warning and rely
+solely on the constraints found in pyproject.toml.
 
 ## python-supported-versions-action
 
-## Usage Example
+## Basic Usage Example
+
+Assuming your Python project code exists in the current working directory
+of your Github workflow:
 
 <!-- markdownlint-disable MD046 -->
 
@@ -36,14 +39,95 @@ is unavailable.
 
 <!-- markdownlint-enable MD046 -->
 
+## Inputs
+
+<!-- markdownlint-disable MD013 -->
+
+| Variable Name     | Description                                             | Required | Default |
+| ----------------- | ------------------------------------------------------- | -------- | ------- |
+| path_prefix       | Directory location containing project code              | false    | '.'     |
+| network_timeout   | Network timeout in seconds for API calls               | false    | '6'     |
+| max_retries       | Number of retry attempts for API calls                 | false    | '2'     |
+| eol_behaviour     | How to handle EOL Python versions: warn\|strip\|fail   | false    | 'warn'  |
+| offline_mode      | Disable network lookups and use internal version list | false | 'false' |
+
+<!-- markdownlint-enable MD013 -->
+
+## EOL (End-of-Life) Python Version Handling
+
+The action automatically detects when Python versions in your project's
+constraints have reached end-of-life (EOL) status and handles them according
+to the `eol_behaviour` input:
+
+### eol_behaviour Options
+
+- **warn** (default): Displays warning messages for EOL versions but includes
+  them in the output matrix. This allows existing workflows to continue
+  running while alerting you to upgrade.
+
+- **strip**: Displays warning messages for EOL versions and removes them from
+  the output matrix. This ensures matrix jobs run against supported
+  Python versions.
+
+- **fail**: Displays error messages for EOL versions and exits the action with
+  status code 1, stopping the workflow. This enforces strict compliance with
+  supported Python versions.
+
+### Warning and Error Messages
+
+EOL versions generate messages in both the action console output and the
+GitHub Step Summary:
+
+**Warn/Strip Mode:**
+
+```text
+Warning: Python 3.8 became unsupported/EOL on date: 2024-10-07 ⚠️
+```
+
+**Fail Mode:**
+
+```text
+Error: Python 3.8 became unsupported/EOL on date: 2024-10-07 🛑
+```
+
+### Usage Examples
+
+**Warn about EOL versions (default):**
+
+```yaml
+- name: "Get Python versions with EOL warnings"
+  uses: lfreleng-actions/python-supported-versions-action@main
+  with:
+    eol_behaviour: 'warn'
+```
+
+**Strip EOL versions from matrix:**
+
+```yaml
+- name: "Get supported Python versions"
+  uses: lfreleng-actions/python-supported-versions-action@main
+  with:
+    eol_behaviour: 'strip'
+```
+
+**Fail on EOL versions:**
+
+```yaml
+- name: "Enforce supported Python versions"
+  uses: lfreleng-actions/python-supported-versions-action@main
+  with:
+    eol_behaviour: 'fail'
+```
+
 ## Outputs
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name | Description                                             |
-| ------------- | ------------------------------------------------------- |
-| BUILD_PYTHON  | Most recent Python version supported by project         |
-| MATRIX_JSON   | All Python versions supported by project as JSON string |
+| Variable Name      | Description                                                |
+| ------------------ | ---------------------------------------------------------- |
+| build_python       | Most recent Python version supported by project           |
+| matrix_json        | All Python versions supported by project as JSON string   |
+| supported_versions | Space-separated list of all supported Python versions     |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -70,11 +154,14 @@ classifiers = [
 A workflow calling this action will produce the output below:
 
 ```console
-Found requires-python constraint: >=3.10 💬
-Version constraint: >=3.10
-Extracted versions from requires-python: 3.10 3.11 3.12 3.13 3.14 💬
-Build Python: 3.14 💬
-Matrix JSON: {"python-version": ["3.10","3.11","3.12","3.13","3.14"]}
+Retrieved supported Python versions from API service 🌍
+Supported versions: 3.9 3.10 3.11 3.12 3.13
+Found requires-python constraint (via fallback): >=3.10
+🔍 Processed requires-python constraint
+Python versions from constraints: 3.10 3.11 3.12 3.13
+✅ Build Python: 3.13
+✅ Supported versions: 3.10 3.11 3.12 3.13
+✅ Matrix JSON: {"python-version":["3.10","3.11","3.12","3.13"]}
 ```
 
 ## Implementation Details
@@ -97,12 +184,36 @@ The action evaluates the constraint against supported Python versions
 
 - `>=X.Y` - Version X.Y and above (most common)
 - `>X.Y` - Greater than version X.Y
+- `<=X.Y` - Version X.Y and below
+- `<X.Y` - Less than version X.Y
 - `==X.Y` - Exact version X.Y
+- `>=X.Y,<Z.W` - Range constraints (e.g., `>=3.10,<3.13`)
+
+**Poetry constraint support:**
+
+- `^X.Y` - Caret constraints (e.g., `^3.10` means `>=3.10,<4.0`)
+- `~=X.Y` - Compatible release (e.g., `~=3.10` means `>=3.10,<3.11`)
+- `==X.Y.*` - Wildcard versions (e.g., `==3.10.*` means `>=3.10,<3.11`)
+
+### Poetry Project Support
+
+The action also supports Poetry projects by extracting Python version constraints
+from `tool.poetry.dependencies.python`:
+
+```toml
+[tool.poetry.dependencies]
+python = "^3.10"     # Caret constraint: >=3.10,<4.0
+python = "~=3.11"    # Compatible release: >=3.11,<3.12
+python = ">=3.9,<3.13"  # Range constraint
+```
+
+Poetry constraints are automatically normalized to standard PEP 440 format
+before processing.
 
 ### Fallback Method: Programming Language Classifiers
 
-If no `requires-python` constraint exists, the action falls back to
-parsing explicit version classifiers:
+If no `requires-python` constraint exists and no Poetry configuration exists,
+the action falls back to parsing explicit version classifiers:
 
 ```toml
 classifiers = [
@@ -112,37 +223,37 @@ classifiers = [
 ]
 ```
 
-### Shared Utility Architecture
+The action supports both single and double-quoted classifier strings.
 
-The action uses a modular architecture with shared utility functions located
-in `lib/eol_utils.sh` and `lib/constraint_utils.sh`. This design eliminates
-code duplication between the main action and test scripts, ensuring
-consistent behavior and easier maintenance.
+### Implementation Architecture
 
-**EOL Utilities (`lib/eol_utils.sh`):**
+The action uses a single composite action implemented in `action.yaml` with
+embedded bash functions for all core functionality. This provides a
+self-contained, portable solution that doesn't require external dependencies.
 
-- `fetch_eol_aware_versions()` - Fetches non-EOL Python versions from API
-- `check_eol_api_availability()` - Tests API connectivity
-- `get_static_python_versions()` - Provides static fallback versions
+**Core Functions:**
 
-**Constraint Parsing Utilities (`lib/constraint_utils.sh`):**
-
+- `version_compare()` - Portable version comparison for major.minor versions
+- `sort_versions()` - Portable version sorting (replaces non-portable sort -V)
+- `fetch_python_data()` - Fetches Python version data from endoflife.date API
+- `check_version_eol()` - Checks if a Python version is end-of-life
+- `normalize_constraint()` - Handles Poetry caret (^) and tilde (~=) constraints
 - `extract_requires_python_constraint()` - Extracts requires-python from pyproject.toml
 - `extract_classifiers_fallback()` - Extracts Python versions from classifiers
 - `parse_version_constraint()` - Parses and applies version constraints
-- `process_python_constraints()` - Complete constraint processing pipeline
+- `handle_eol_versions()` - Processes EOL versions based on eol_behaviour setting
 - `generate_matrix_json()` - Creates GitHub Actions matrix JSON
-- `validate_version_format()` - Validates version number formats
 - `get_build_version()` - Determines latest version for builds
 
-**Benefits:**
+**Design Benefits:**
 
-- Single source of truth for constraint parsing logic
-- Prevents logic drift between action and tests
-- Consistent behavior across action and tests
-- Easier maintenance and updates
-- Improved code quality and reliability
-- Comprehensive unit test coverage
+- Self-contained implementation with no external file dependencies
+- Portable across all GitHub runner types (Ubuntu, macOS, Windows)
+- Robust error handling and graceful degradation
+- Enhanced TOML parsing supporting both single and double quotes
+- Support for Poetry constraints (^3.10, ~=3.10) and complex ranges
+- Dual-approach TOML parsing: Python-based primary, regex fallback
+- Portable version comparison that works on all GitHub runner types
 
 ### Supported Python Versions
 
@@ -174,10 +285,9 @@ when possible.
 ## Dynamic Version Fetching with EOL Awareness
 
 The action automatically fetches the latest supported Python versions from
-official sources while filtering out end-of-life (EOL) versions. This
-ensures
-that projects use supported Python versions, improving security
-and maintainability.
+official sources while filtering out end-of-life (EOL) versions. This ensures
+that projects use supported Python versions, improving security and
+maintainability.
 
 ### How It Works
 
@@ -196,6 +306,24 @@ and maintainability.
    - Not end-of-life (still receiving security updates)
    - Actively maintained by the Python core team
 
+### Offline Mode Support
+
+The action includes an `offline_mode` input for environments without internet access:
+
+```yaml
+- name: "Get Python versions (offline)"
+  uses: lfreleng-actions/python-supported-versions-action@main
+  with:
+    offline_mode: 'true'
+```
+
+When using offline mode:
+
+- Network requests do not occur
+- Uses internal static version list: 3.9, 3.10, 3.11, 3.12, 3.13
+- EOL filtering does not occur
+- Perfect for air-gapped or restricted network environments
+
 ### Network Resilience
 
 The action includes robust error handling for network-related issues:
@@ -205,6 +333,7 @@ The action includes robust error handling for network-related issues:
 - **Graceful Degradation**: Falls back to static versions if the API is
   unavailable
 - **No Workflow Failure**: Network issues don't cause the action to fail
+- **Offline Mode**: Complete network bypass when needed
 
 ### Benefits
 
@@ -223,87 +352,57 @@ The action includes robust error handling for network-related issues:
 When dynamic fetching with EOL filtering is successful:
 
 ```text
-Fetching valid/supported Python versions
-Using dynamic-eol-aware Python versions: 3.9 3.10 3.11 3.12 3.13
+Retrieved supported Python versions from API service 🌍
+Supported versions: 3.9 3.10 3.11 3.12 3.13
+```
+
+When using offline mode:
+
+```text
+Using internal supported Python versions (offline mode) 📴
+Supported versions: 3.9 3.10 3.11 3.12 3.13
 ```
 
 When the endoflife.date API is unavailable:
 
 ```text
-Fetching valid/supported Python versions
-⚠️  API unavailable, using static fallback versions
-Using static Python versions: 3.9 3.10 3.11 3.12 3.13
+Unable to retrieve supported Python versions, using internal list ⚠️
+Supported versions: 3.9 3.10 3.11 3.12 3.13
 ```
 
 ## Testing
 
-The action includes comprehensive tests to verify dynamic fetching, EOL
-filtering,
-and fallback behavior:
-
-### Running Tests
-
-```bash
-# Test EOL-aware version filtering
-./tests/test_eol_filtering.sh
-
-# Test dynamic version fetching with EOL awareness
-./tests/test_dynamic_versions.sh
-
-# Test network fallback behavior
-./tests/test_fallback.sh
-
-# Simple end-to-end test
-./tests/simple_test.sh
-
-# Run all tests (comprehensive suite)
-./tests/run_all_tests.sh
-```
-
-### Test Coverage
-
-- **EOL-Aware Filtering**: Verifies correct exclusion of end-of-life Python
-  versions
-- **Dynamic Version Fetching**: Verifies API calls and version parsing with
-  EOL filtering
-- **Network Fallback**: Tests behavior when network is unavailable
-- **Static EOL Data**: Tests fallback EOL filtering when API is unavailable
-- **Version Parsing**: Validates extraction of stable, supported releases
-- **JSON Generation**: Ensures output format is correct
-- **Error Handling**: Confirms graceful degradation
-- **Edge Cases**: Tests date comparison, empty data, and mixed scenarios
-
 ### Manual Testing
 
-To manually test the EOL-aware dynamic fetching:
+To manually test the action behavior:
 
 ```bash
-# Test EOL API endpoint
+# Test EOL API endpoint directly
 curl -s "https://endoflife.date/api/python.json" | \
-  jq -r '.[] | select(.eol > now) | .cycle'
+  jq -r '.[] | select(.cycle | test("^3\\.(9|[1-9][0-9])$")) | .cycle'
 
-# Test GitHub tags endpoint with filtering
-curl -s \
-  "https://api.github.com/repos/python/cpython/tags?per_page=100" | \
-grep '"name": "v[0-9]' | \
-grep -v -E '(a[0-9]|b[0-9]|rc[0-9])' | \
-sed 's/.*"v\([0-9]\+\.[0-9]\+\)\.[0-9]\+".*/\1/' | \
-sort -V | uniq | \
-awk '$1 >= 3.9'
+# Test with a sample pyproject.toml
+echo 'requires-python = ">=3.10"' > test_pyproject.toml
 
-# Combined test (EOL filtering + GitHub tags)
-echo "Testing complete EOL-aware filtering pipeline..."
+# Run the action locally (if using act or similar)
+act -j test
 ```
 
-Expected output should include current non-EOL stable Python versions.
-As of 2025, this typically includes 3.9, 3.10, 3.11, 3.12, 3.13 (3.8 and
-earlier are EOL).
+### Expected Behavior
+
+The action handles these scenarios:
+
+- **Normal Operation**: Fetches current Python versions, applies constraints
+- **Network Issues**: Falls back to internal version list with warnings
+- **Offline Mode**: Uses internal list, skips all network calls
+- **EOL Versions**: Handles according to eol_behaviour setting
+- **Invalid Constraints**: Provides clear error messages
 
 ### EOL Status Reference
 
 Current Python EOL schedule (as of 2025):
 
-- **Python 3.8**: EOL October 7, 2024 (excluded)
+- **Python 3.8**: EOL October 7, 2024 (excluded by default)
 - **Python 3.9**: EOL October 31, 2025 (included)
 - **Python 3.10**: EOL October 31, 2026 (included)
 - **Python 3.11**: EOL October 31, 2027 (included)
@@ -312,3 +411,9 @@ Current Python EOL schedule (as of 2025):
 
 The action automatically updates this information by fetching current EOL data
 from endoflife.date, ensuring accuracy without manual intervention.
+
+**Note:** The `eol_behaviour` input controls how the action handles EOL versions:
+
+- `warn`: Include EOL versions with warnings
+- `strip`: Exclude EOL versions with warnings
+- `fail`: Action exits with error when detecting EOL versions
