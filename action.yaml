@@ -66,7 +66,6 @@ runs:
         # Process and determine supported Python versions
         set -euo pipefail
 
-        PYPROJECT_FILE="${INPUT_PATH_PREFIX}/pyproject.toml"
         TIMEOUT="${INPUT_NETWORK_TIMEOUT}"
         RETRIES="${INPUT_MAX_RETRIES}"
         EOL_BEHAVIOUR="${INPUT_EOL_BEHAVIOUR}"
@@ -80,6 +79,9 @@ runs:
         path_prefix="${INPUT_PATH_PREFIX}"
         path_prefix="${path_prefix:-'.'}"
         path_prefix="${path_prefix%/}"
+
+        # Set PYPROJECT_FILE after path normalization
+        PYPROJECT_FILE="${path_prefix}/pyproject.toml"
 
         # Check tool availability
         if ! command -v jq >/dev/null 2>&1; then
