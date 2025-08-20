@@ -118,7 +118,7 @@ requires-python = ">=3.9"')
         ">=3.9"
     rm -f "$test_file"
 
-    # Test 2: Complex constraint
+    # Test 2: Complex requires-python constraint
     log_test_start "Complex requires-python constraint"
     test_file=$(create_test_file '[build-system]
 requires-python = ">=3.9,<3.13"')
@@ -141,6 +141,15 @@ name = "test-project"')
     run_test "Missing file should fail" \
         "extract_requires_python_constraint '/nonexistent/file.toml'" \
         1
+
+    # Test 5: Poetry [tool.poetry.dependencies].python extraction
+    log_test_start "Poetry python dependency extraction"
+    test_file=$(create_test_file '[tool.poetry.dependencies]
+python = "^3.10"')
+    test_output "Poetry python extraction (^3.10)" \
+        "extract_requires_python_constraint '$test_file'" \
+        "^3.10"
+    rm -f "$test_file"
 }
 
 # Test extract_classifiers_fallback function
@@ -265,6 +274,42 @@ test_parse_version_constraint() {
     run_test "Invalid constraint should fail" \
         "parse_version_constraint 'invalid' '$available_versions'" \
         1
+
+    # Test 9: PEP 440 compatible release (~=) without patch
+    log_test_start "Compatible release (~=3.10)"
+    test_output "~=3.10 constraint" \
+        "parse_version_constraint '~=3.10' '$available_versions'" \
+        "3.10"
+
+    # Test 10: PEP 440 compatible release (~=) with patch
+    log_test_start "Compatible release (~=3.10.1)"
+    test_output "~=3.10.1 constraint" \
+        "parse_version_constraint '~=3.10.1' '$available_versions'" \
+        "3.10"
+
+    # Test 11: Poetry caret (^) without patch
+    log_test_start "Caret constraint (^3.10)"
+    test_output "^3.10 constraint" \
+        "parse_version_constraint '^3.10' '$available_versions'" \
+        "3.10 3.11 3.12 3.13"
+
+    # Test 12: Poetry caret (^) with patch
+    log_test_start "Caret constraint (^3.10.1)"
+    test_output "^3.10.1 constraint" \
+        "parse_version_constraint '^3.10.1' '$available_versions'" \
+        "3.10 3.11 3.12 3.13"
+
+    # Test 13: Wildcard exact (==3.10.*)
+    log_test_start "Wildcard exact (==3.10.*)"
+    test_output "==3.10.* constraint" \
+        "parse_version_constraint '==3.10.*' '$available_versions'" \
+        "3.10"
+
+    # Test 14: Exclusion (!=3.10)
+    log_test_start "Exclusion (!=3.10)"
+    test_output "!=3.10 constraint" \
+        "parse_version_constraint '!=3.10' '$available_versions'" \
+        "3.8 3.9 3.11 3.12 3.13"
 }
 
 # Test generate_matrix_json function
@@ -394,6 +439,15 @@ name = "test-project"')
     run_test "No constraints should fail" \
         "process_python_constraints '$test_file' '$available_versions'" \
         1
+    rm -f "$test_file"
+
+    # Test 4: Poetry python constraint via [tool.poetry.dependencies]
+    log_test_start "Process Poetry caret constraint"
+    test_file=$(create_test_file '[tool.poetry.dependencies]
+python = "^3.10"')
+    test_output "Process Poetry constraint (^3.10)" \
+        "process_python_constraints '$test_file' '$available_versions'" \
+        "3.10 3.11 3.12 3.13"
     rm -f "$test_file"
 }
 

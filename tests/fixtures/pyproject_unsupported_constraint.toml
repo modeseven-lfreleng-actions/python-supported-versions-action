@@ -2,17 +2,18 @@
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 
 # TEST_METADATA:
-# TEST_NAME: Unsupported constraint (fallback to classifiers)
-# TEST_TYPE: unsupported-constraint
+# TEST_NAME: Compatible release requires-python constraint (~=3.10.0)
+# TEST_TYPE: requires-python
 # SHOULD_FAIL: false
 # EXPECTED_MIN_VERSION: 3.10
-# EXPECTED_VERSIONS_COUNT: 3
-# DESCRIPTION: Tests fallback to classifiers when requires-python format is unsupported
+# EXPECTED_EXACT_VERSION: 3.10
+# EXPECTED_VERSIONS_COUNT: 1
+# DESCRIPTION: Tests compatible release (~=) requires-python constraint is supported and resolves to 3.10 only
 
 [project]
 name = "test-unsupported-constraint"
 version = "1.0.0"
-description = "Test project with unsupported requires-python constraint format"
+description = "Test project with compatible release (~=) requires-python constraint"
 requires-python = "~=3.10.0"
 readme = "README.md"
 license = { text = "Apache-2.0" }

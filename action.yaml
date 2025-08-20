@@ -19,34 +19,81 @@ inputs:
   path_prefix:
     description: "Directory location containing project code"
     required: false
+    default: '.'
   network_timeout:
     description: "Network timeout in seconds for API calls"
     required: false
-    default: '10'
+    default: '6'
   max_retries:
     description: "Maximum number of retry attempts for API calls"
     required: false
     default: '2'
+  eol_behaviour:
+    description: "How to handle EOL Python versions: warn|strip|fail"
+    required: false
+    default: 'warn'
+  offline_mode:
+    description: "Disable network lookups and use internal version list only"
+    required: false
+    default: 'false'
 
 outputs:
   build_python:
     description: "Most recent Python version supported by project"
-    value: "${{ steps.parse.outputs.build_python }}"
+    value: "${{ steps.versions.outputs.build_python }}"
   matrix_json:
     description: "All Python versions supported by project as JSON string"
     # Example: matrix_json = {"python-version": ["3.10", "3.11"]}
-    value: "${{ steps.parse.outputs.matrix_json }}"
+    value: "${{ steps.versions.outputs.matrix_json }}"
+  supported_versions:
+    description: "Space-separated list of all supported Python versions"
+    value: "${{ steps.versions.outputs.supported_versions }}"
 
 runs:
   using: "composite"
   steps:
-    - name: "Setup and validate environment"
+    - id: versions
+      name: "Process and determine supported Python versions"
       shell: "bash"
+      env:
+        INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
+        INPUT_NETWORK_TIMEOUT: ${{ inputs.network_timeout }}
+        INPUT_MAX_RETRIES: ${{ inputs.max_retries }}
+        INPUT_EOL_BEHAVIOUR: ${{ inputs.eol_behaviour }}
+        INPUT_OFFLINE_MODE: ${{ inputs.offline_mode }}
+      # yamllint disable rule:line-length
       run: |
+        # Process and determine supported Python versions
+        set -euo pipefail
+
+        PYPROJECT_FILE="${INPUT_PATH_PREFIX}/pyproject.toml"
+        TIMEOUT="${INPUT_NETWORK_TIMEOUT}"
+        RETRIES="${INPUT_MAX_RETRIES}"
+        EOL_BEHAVIOUR="${INPUT_EOL_BEHAVIOUR}"
+        OFFLINE_MODE="${INPUT_OFFLINE_MODE}"
+
+
+        # Internal list of supported Python versions (requires periodic update)
+        INTERNAL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13"
+
         # Setup and validate environment
-        path_prefix="${{ inputs.path_prefix }}"
+        path_prefix="${INPUT_PATH_PREFIX}"
         path_prefix="${path_prefix:-'.'}"
         path_prefix="${path_prefix%/}"
+
+        # Check tool availability
+        if ! command -v jq >/dev/null 2>&1; then
+          echo 'Error: jq is required but not available. Please install jq or use a runner with jq pre-installed ❌'
+          exit 1
+        fi
+
+        if [[ "$OFFLINE_MODE" != "true" ]]; then
+          if ! command -v curl >/dev/null 2>&1; then
+            echo 'Error: curl is required but not available ❌'
+            exit 1
+          fi
+        fi
+
 
         # Validate directory and pyproject.toml existence
         if [[ ! -d "$path_prefix" ]]; then
@@ -59,130 +106,732 @@ runs:
           exit 1
         fi
 
-        echo "path_prefix=$path_prefix" >> "$GITHUB_ENV"
-        echo "network_timeout=${{ inputs.network_timeout }}" >> "$GITHUB_ENV"
-        echo "max_retries=${{ inputs.max_retries }}" >> "$GITHUB_ENV"
-
-    - name: "Fetch supported Python versions with EOL awareness"
-      shell: "bash"
-      run: |
-        # Fetch supported Python versions with EOL awareness
-        set -o pipefail
-
-        # Configuration
-        TIMEOUT="${{ env.network_timeout }}"
-        RETRIES="${{ env.max_retries }}"
-
-        # Source shared EOL utility functions
-        # shellcheck source=lib/eol_utils.sh
-        source "$GITHUB_ACTION_PATH/lib/eol_utils.sh"
-
-        # Source shared constraint parsing utilities
-        # shellcheck source=lib/constraint_utils.sh
-        source "$GITHUB_ACTION_PATH/lib/constraint_utils.sh"
-
-        # Main version fetching logic
-        echo 'Fetching valid/supported Python versions'
-
-        if PYTHON_VERSIONS=$(fetch_eol_aware_versions \
-          "$TIMEOUT" "$RETRIES"); then
-          echo "all_supported_versions=$PYTHON_VERSIONS" >> "$GITHUB_ENV"
-          echo 'versions_source=dynamic-eol-aware' >> "$GITHUB_ENV"
-        else
-          echo "⚠️  API unavailable, using static fallback versions"
-          STATIC_VERSIONS=$(get_static_python_versions)
-          echo "all_supported_versions=$STATIC_VERSIONS" >> "$GITHUB_ENV"
-          echo 'versions_source=static' >> "$GITHUB_ENV"
+        # Validate eol_behaviour input
+        if [[ "$EOL_BEHAVIOUR" != "warn" && "$EOL_BEHAVIOUR" != "strip" && \
+              "$EOL_BEHAVIOUR" != "fail" ]]; then
+          echo 'Error: eol_behaviour must be one of: warn, strip, fail ❌'
+          exit 1
         fi
 
-    - name: "Extract Python version constraints"
-      shell: "bash"
-      run: |
-        # Extract Python version constraints from pyproject.toml
-        PYPROJECT_FILE="${{ env.path_prefix }}/pyproject.toml"
-
-        # Source shared constraint parsing utilities
-        # shellcheck source=lib/constraint_utils.sh
-        source "$GITHUB_ACTION_PATH/lib/constraint_utils.sh"
-
-        # Extract requires-python constraint using shared utility
-        if REQUIRES_PYTHON=$(extract_requires_python_constraint \
-          "$PYPROJECT_FILE"); then
-          echo "📋 Found requires-python constraint: $REQUIRES_PYTHON"
-          echo "requires_python=$REQUIRES_PYTHON" >> "$GITHUB_ENV"
-        else
-          echo "requires_python=" >> "$GITHUB_ENV"
+        # Validate offline_mode input
+        if [[ "$OFFLINE_MODE" != "true" && "$OFFLINE_MODE" != "false" ]]; then
+          echo 'Error: offline_mode must be true or false ❌'
+          exit 1
         fi
 
-        # Extract classifiers fallback using shared utility
+        # Validate numeric inputs for network timeout and max retries
+        if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
+          echo 'Error: network_timeout must be a non-negative integer ❌'
+          exit 1
+        fi
+        if ! [[ "$RETRIES" =~ ^[0-9]+$ ]]; then
+          echo 'Error: max_retries must be a non-negative integer ❌'
+          exit 1
+        fi
+
+        # Function: Portable version comparison (major.minor format)
+        version_compare() {
+            local v1="$1"
+            local op="$2"
+            local v2="$3"
+
+            # Split versions into major.minor
+            local v1_major="${v1%%.*}"
+            local v1_minor="${v1##*.}"
+            local v2_major="${v2%%.*}"
+            local v2_minor="${v2##*.}"
+
+            # Convert to integers for comparison
+            v1_major=$((v1_major))
+            v1_minor=$((v1_minor))
+            v2_major=$((v2_major))
+            v2_minor=$((v2_minor))
+
+            case "$op" in
+                "lt")
+                    [[ $v1_major -lt $v2_major ]] || \
+                    [[ $v1_major -eq $v2_major && $v1_minor -lt $v2_minor ]]
+                    ;;
+                "le")
+                    [[ $v1_major -lt $v2_major ]] || \
+                    [[ $v1_major -eq $v2_major && $v1_minor -le $v2_minor ]]
+                    ;;
+                "gt")
+                    [[ $v1_major -gt $v2_major ]] || \
+                    [[ $v1_major -eq $v2_major && $v1_minor -gt $v2_minor ]]
+                    ;;
+                "ge")
+                    [[ $v1_major -gt $v2_major ]] || \
+                    [[ $v1_major -eq $v2_major && $v1_minor -ge $v2_minor ]]
+                    ;;
+                "eq")
+                    [[ $v1_major -eq $v2_major && $v1_minor -eq $v2_minor ]]
+                    ;;
+                *)
+                    echo "Invalid comparison operator: $op" >&2
+                    return 1
+                    ;;
+            esac
+        }
+
+        # Function: Portable version sorting
+        sort_versions() {
+            local versions="$1"
+            # Use numeric sort on major and minor parts, then join back to space-separated string
+            printf '%s\n' "$versions" | tr ' ' '\n' | sort -t. -k1,1n -k2,2n | tr '\n' ' ' | sed 's/ $//'
+        }
+
+        # Function: Fetch Python EOL data and optionally format as version list
+        fetch_python_data() {
+            local timeout="$1"
+            local retries="$2"
+            local format="${3:-raw}"  # Default to raw format
+            local eol_data
+
+            if [[ "$OFFLINE_MODE" == "true" ]]; then
+                if [[ "$format" == "versions" ]]; then
+                    printf '%s\n' "$INTERNAL_SUPPORTED_VERSIONS"
+                else
+                    echo "[]"  # Empty array for offline mode
+                fi
+                return 0
+            fi
+
+            # Fetch data with error checking
+            # Determine if curl supports --retry-all-errors; fallback if not
+            local curl_retry_flag=""
+            if curl --help 2>/dev/null | grep -q -- '--retry-all-errors'; then
+                curl_retry_flag="--retry-all-errors"
+            fi
+            if eol_data=$(curl -s --max-time "$timeout" --retry "$retries" $curl_retry_flag 'https://endoflife.date/api/python.json' 2>/dev/null); then
+                # Verify we got valid JSON array with expected structure
+                if [[ -n "$eol_data" ]] && echo "$eol_data" | jq -e 'type=="array" and length>0 and all(.[]; has("cycle"))' >/dev/null 2>&1; then
+                    if [[ "$format" == "versions" ]]; then
+                        # Return processed version list (3.9+)
+                        printf '%s\n' "$eol_data" | \
+                          jq -r '.[] | select(.cycle | test("^(3\\.(9|[1-9][0-9])|[4-9][0-9]*\\.[0-9]+)$")) | .cycle' | \
+                          tr '\n' ' ' | sed 's/ $//'
+                    else
+                        # Return raw JSON data
+                        echo "$eol_data"
+                    fi
+                    return 0
+                else
+                    echo "Error: Invalid or empty EOL data received" >&2
+                    return 1
+                fi
+            else
+                echo "Error: Failed to fetch EOL data from API" >&2
+                return 1
+            fi
+        }
+
+        # Function: Check if a version is EOL
+        check_version_eol() {
+            local version="$1"
+            local eol_data="$2"
+            local current_date eol_date eol_type
+
+            if [[ "$OFFLINE_MODE" == "true" ]]; then
+                echo "false"
+                return 0
+            fi
+
+            current_date=$(date +%Y-%m-%d)
+
+            # Extract EOL date for the specific version, handling different types
+            local eol_info
+            eol_info=$(printf '%s\n' "$eol_data" | \
+              jq -r --arg ver "$version" \
+              '.[] | select(.cycle == $ver) | {eol: .eol, type: (.eol | type)}' 2>/dev/null)
+
+            if [[ -z "$eol_info" || "$eol_info" == "null" ]]; then
+                echo "false"
+                return 0
+            fi
+
+            eol_date=$(echo "$eol_info" | jq -r '.eol // "null"')
+            eol_type=$(echo "$eol_info" | jq -r '.type')
+
+            # Handle different EOL field types
+            case "$eol_type" in
+                "string")
+                    if [[ "$eol_date" != "null" && "$eol_date" != "" ]]; then
+                        if [[ "$eol_date" < "$current_date" || "$eol_date" == "$current_date" ]]; then
+                            echo "$eol_date"
+                        else
+                            echo "false"
+                        fi
+                    else
+                        echo "false"
+                    fi
+                    ;;
+                "boolean")
+                    # If EOL is boolean true, it's EOL (no specific date)
+                    if [[ "$eol_date" == "true" ]]; then
+                        echo "true"
+                    else
+                        echo "false"
+                    fi
+                    ;;
+                *)
+                    echo "false"
+                    ;;
+            esac
+        }
+
+        # Function: Normalize constraint (handle ~= and ^ operators)
+        normalize_constraint() {
+            local constraint="$1"
+
+            # Leave exclusions untouched so the parser can handle them precisely
+            if [[ "$constraint" == \!* ]]; then
+                echo "$constraint"
+                return 0
+            fi
+
+            # Handle Poetry caret constraints with patch: ^3.10.1 -> >=3.10,<4.0
+            if [[ "$constraint" =~ ^\^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                local major="${BASH_REMATCH[1]}"
+                local minor="${BASH_REMATCH[2]}"
+                local next_major=$((major + 1))
+                echo ">=${major}.${minor},<${next_major}.0"
+                return 0
+            fi
+
+            # Handle Poetry caret constraints: ^3.10 -> >=3.10,<4.0
+            if [[ "$constraint" =~ ^\^([0-9]+)\.([0-9]+)$ ]]; then
+                local major="${BASH_REMATCH[1]}"
+                local minor="${BASH_REMATCH[2]}"
+                local next_major=$((major + 1))
+                echo ">=${major}.${minor},<${next_major}.0"
+                return 0
+            fi
+
+            # Handle compatible release with patch: ~=3.10.1 -> >=3.10,<3.11
+            if [[ "$constraint" =~ ^~=([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                local major="${BASH_REMATCH[1]}"
+                local minor="${BASH_REMATCH[2]}"
+                local next_minor=$((minor + 1))
+                echo ">=${major}.${minor},<${major}.${next_minor}"
+                return 0
+            fi
+
+            # Handle compatible release: ~=3.10 -> >=3.10,<3.11
+            if [[ "$constraint" =~ ^~=([0-9]+)\.([0-9]+)$ ]]; then
+                local major="${BASH_REMATCH[1]}"
+                local minor="${BASH_REMATCH[2]}"
+                local next_minor=$((minor + 1))
+                echo ">=${major}.${minor},<${major}.${next_minor}"
+                return 0
+            fi
+
+            # Handle wildcard constraints: ==3.10.* -> >=3.10,<3.11
+            if [[ "$constraint" =~ ^==([0-9]+)\.([0-9]+)\.\*$ ]]; then
+                local major="${BASH_REMATCH[1]}"
+                local minor="${BASH_REMATCH[2]}"
+                local next_minor=$((minor + 1))
+                echo ">=${major}.${minor},<${major}.${next_minor}"
+                return 0
+            fi
+
+            # Strip patch versions from bounds: <3.13.0 -> <3.13 (does not affect '!=')
+            constraint=$(echo "$constraint" | sed 's/\([<>=]\+\)\([0-9]\+\.[0-9]\+\)\.[0-9]\+/\1\2/g')
+
+            # Return normalized constraint
+            echo "$constraint"
+        }
+
+        # Function: Extract requires-python constraint from pyproject.toml using Python
+        extract_requires_python_python() {
+            local pyproject_file="$1"
+
+            if [[ ! -f "$pyproject_file" ]]; then
+                return 1
+            fi
+
+            # Try using Python with tomllib (Python 3.11+) or tomli
+            python3 -c "import sys, importlib.util as iu; fp=sys.argv[1]; tmod='tomllib' if iu.find_spec('tomllib') else ('tomli' if iu.find_spec('tomli') else 'toml'); t=__import__(tmod); data=t.load(open(fp, 'rb' if tmod!='toml' else 'r')); v=(data.get('project', {}).get('requires-python') or data.get('tool', {}).get('poetry', {}).get('dependencies', {}).get('python')); print(v) if v else None; sys.exit(0 if v else 1)" "$pyproject_file" 2>/dev/null
+        }
+
+        # Function: Extract requires-python constraint from pyproject.toml (fallback)
+        extract_requires_python_fallback() {
+            local pyproject_file="$1"
+            local constraint
+
+            if [[ ! -f "$pyproject_file" ]]; then
+                return 1
+            fi
+
+            # Extract requires-python constraint, supporting both single and double quotes
+            # Ignore commented lines
+            constraint=$(grep -v '^[[:space:]]*#' "$pyproject_file" 2>/dev/null | \
+                         grep 'requires-python.*=' | \
+                         sed -E 's/.*requires-python.*=[[:space:]]*['\''"]([^'\''"]*)['\''"].*/\1/' | \
+                         head -1)
+
+            if [[ -n "$constraint" ]]; then
+                printf '%s\n' "$constraint"
+                return 0
+            fi
+
+            # Fall back to Poetry python dependency (robust section parsing)
+            constraint=$(awk '
+              BEGIN{insec=0}
+              /^\[tool\.poetry\.dependencies\]/{insec=1; next}
+              /^\[.*\]/{if(insec) exit}
+              insec{print}
+            ' "$pyproject_file" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -E '^[[:space:]]*python[[:space:]]*=' | sed -E 's/.*=[[:space:]]*['\''"]([^'\''"]*)['\''"].*/\1/' | head -1)
+
+            if [[ -n "$constraint" ]]; then
+                printf '%s\n' "$constraint"
+                return 0
+            else
+                return 1
+            fi
+        }
+
+        # Function: Extract Programming Language classifiers from pyproject.toml
+        extract_classifiers_fallback() {
+            local pyproject_file="$1"
+            local classifiers
+
+            if [[ ! -f "$pyproject_file" ]]; then
+                return 1
+            fi
+
+            # Extract Python versions from Programming Language classifiers
+            # Support both single and double quotes, ignore commented lines
+            classifiers=$(grep -v '^[[:space:]]*#' "$pyproject_file" 2>/dev/null | \
+                          grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+' | \
+                          grep -oE '[0-9]+\.[0-9]+' | \
+                          sort -u | tr '\n' ' ' | sed 's/ *$//')
+
+            if [[ -n "$classifiers" ]]; then
+                printf '%s\n' "$classifiers"
+                return 0
+            else
+                return 1
+            fi
+        }
+
+        # Function: Parse version constraint and return all matching versions
+        parse_version_constraint() {
+            local constraint="$1"
+            local all_versions="$2"
+            local result=''
+
+            # Normalize the constraint first
+            constraint=$(normalize_constraint "$constraint")
+
+            # Handle complex constraints with multiple parts (e.g., ">=3.11,<3.13")
+            if [[ "$constraint" == *","* ]]; then
+                local candidates="$all_versions"
+
+                # Split by comma and process each constraint part
+                local IFS=','
+                local -a parts
+                read -ra parts <<< "$constraint"
+                unset IFS
+
+                for part in "${parts[@]}"; do
+                    # Trim whitespace
+                    part=$(echo "$part" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    local temp_result=''
+
+                    case "$part" in
+                        \>=*)
+                            local min_version="${part#>=}"
+                            for version in $candidates; do
+                                if version_compare "$version" "ge" "$min_version"; then
+                                    temp_result="$temp_result $version"
+                                fi
+                            done
+                            ;;
+                        \>*)
+                            local min_version="${part#>}"
+                            for version in $candidates; do
+                                if version_compare "$version" "gt" "$min_version"; then
+                                    temp_result="$temp_result $version"
+                                fi
+                            done
+                            ;;
+                        \<=*)
+                            local max_version="${part#<=}"
+                            for version in $candidates; do
+                                if version_compare "$version" "le" "$max_version"; then
+                                    temp_result="$temp_result $version"
+                                fi
+                            done
+                            ;;
+                        \<*)
+                            local max_version="${part#<}"
+                            for version in $candidates; do
+                                if version_compare "$version" "lt" "$max_version"; then
+                                    temp_result="$temp_result $version"
+                                fi
+                            done
+                            ;;
+                        ==*)
+                            local exact_version="${part#==}"
+                            for version in $candidates; do
+                                if version_compare "$version" "eq" "$exact_version"; then
+                                    temp_result="$version"
+                                    break
+                                fi
+                            done
+                            ;;
+                        \!\=*)
+                            local exclude_raw="${part#!=}"
+                            local exclude_target=""
+                            if [[ "$exclude_raw" =~ ^([0-9]+)\.([0-9]+) ]]; then
+                                exclude_target="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+                            else
+                                exclude_target="$exclude_raw"
+                            fi
+                            for version in $candidates; do
+                                if ! version_compare "$version" "eq" "$exclude_target"; then
+                                    temp_result="$temp_result $version"
+                                fi
+                            done
+                            ;;
+                        *)
+                            echo "Warning: Unsupported constraint part: $part" >&2
+                            return 1
+                            ;;
+                    esac
+
+                    # Update candidates to be the filtered result
+                    if [[ -n "$temp_result" ]]; then
+                        candidates=$(echo "$temp_result" | tr ' ' '\n' | grep -v '^$' | \
+                                   sort -u | tr '\n' ' ' | sed 's/ *$//')
+                    else
+                        candidates=''
+                        break  # No matches found, no point continuing
+                    fi
+                done
+
+                result="$candidates"
+            else
+                # Handle simple constraints
+                case "$constraint" in
+                    \>=*)
+                        local min_version="${constraint#>=}"
+                        for version in $all_versions; do
+                            if version_compare "$version" "ge" "$min_version"; then
+                                result="$result $version"
+                            fi
+                        done
+                        ;;
+                    \>*)
+                        local min_version="${constraint#>}"
+                        for version in $all_versions; do
+                            if version_compare "$version" "gt" "$min_version"; then
+                                result="$result $version"
+                            fi
+                        done
+                        ;;
+                    \<=*)
+                        local max_version="${constraint#<=}"
+                        for version in $all_versions; do
+                            if version_compare "$version" "le" "$max_version"; then
+                                result="$result $version"
+                            fi
+                        done
+                        ;;
+                    \<*)
+                        local max_version="${constraint#<}"
+                        for version in $all_versions; do
+                            if version_compare "$version" "lt" "$max_version"; then
+                                result="$result $version"
+                            fi
+                        done
+                        ;;
+                    ==*)
+                        local exact_version="${constraint#==}"
+                        for version in $all_versions; do
+                            if version_compare "$version" "eq" "$exact_version"; then
+                                result="$version"
+                                break
+                            fi
+                        done
+                        ;;
+                    \!\=*)
+                        local exclude_raw="${constraint#!=}"
+                        local exclude_target=""
+                        if [[ "$exclude_raw" =~ ^([0-9]+)\.([0-9]+) ]]; then
+                            exclude_target="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+                        else
+                            exclude_target="$exclude_raw"
+                        fi
+                        for version in $all_versions; do
+                            if ! version_compare "$version" "eq" "$exclude_target"; then
+                                result="$result $version"
+                            fi
+                        done
+                        ;;
+                    *)
+                        echo "Warning: Unsupported constraint format: $constraint" >&2
+                        return 1
+                        ;;
+                esac
+            fi
+
+            # Clean up, sort, and return result
+            result=$(printf '%s\n' "$result" | sed 's/^ *//' | sed 's/ *$//')
+            if [[ -n "$result" ]]; then
+                # Ensure final result is properly sorted
+                result=$(sort_versions "$result")
+                printf '%s\n' "$result"
+                return 0
+            else
+                return 1
+            fi
+        }
+
+        # Function: Handle EOL versions based on behaviour setting
+        handle_eol_versions() {
+            local requested_versions="$1"
+            local eol_behaviour="$2"
+            local timeout="$3"
+            local retries="$4"
+            local final_versions=""
+            local eol_data
+
+            if [[ "$OFFLINE_MODE" == "true" ]]; then
+                [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "⚠️ Warning: Offline mode enabled, EOL filtering disabled" >> "$GITHUB_STEP_SUMMARY"
+                printf '%s\n' "$requested_versions"
+                return 0
+            fi
+
+            # Fetch EOL data once
+            if ! eol_data=$(fetch_python_data "$timeout" "$retries" "raw"); then
+              echo "⚠️ Warning: Could not fetch EOL data, proceeding with all requested versions" >&2
+              [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "⚠️ Warning: EOL filtering disabled due to API failure" >> "$GITHUB_STEP_SUMMARY"
+              printf '%s\n' "$requested_versions"
+              return 0
+            fi
+
+            echo "✅ Successfully fetched EOL data for version filtering" >&2
+
+            # Process each version individually
+            for version in $requested_versions; do
+                local eol_result
+                eol_result=$(check_version_eol "$version" "$eol_data")
+
+                if [[ "$eol_result" != "false" ]]; then
+                    # This version is EOL
+                    case "$eol_behaviour" in
+                        "warn")
+                            local message
+                            if [[ "$eol_result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                              message="⚠️ Warning: Python $version is EOL (end-of-life date: $eol_result)"
+                            else
+                              message="⚠️ Warning: Python $version is EOL"
+                            fi
+                            echo "$message" >&2
+                            [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$message" >> "$GITHUB_STEP_SUMMARY"
+                            # Include this version in final list
+                            final_versions="$final_versions $version"
+                            ;;
+                        "strip")
+                            local message
+                            if [[ "$eol_result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                              message="⚠️ Warning: Python $version is EOL (end-of-life date: $eol_result) - removing from matrix"
+                            else
+                              message="⚠️ Warning: Python $version is EOL - removing from matrix"
+                            fi
+                            echo "$message" >&2
+                            [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$message" >> "$GITHUB_STEP_SUMMARY"
+                            # Do not include this version in final list
+                            ;;
+                        "fail")
+                            local message
+                            if [[ "$eol_result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                              message="🛑 Error: Python $version is EOL (end-of-life date: $eol_result)"
+                            else
+                              message="🛑 Error: Python $version is EOL"
+                            fi
+                            echo "$message" >&2
+                            [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "$message" >> "$GITHUB_STEP_SUMMARY"
+                            exit 1
+                            ;;
+                    esac
+                else
+                    # This version is not EOL, include it
+                    final_versions="$final_versions $version"
+                fi
+            done
+
+            # Clean up whitespace and return
+            final_versions=$(echo "$final_versions" | sed 's/^ *//' | sed 's/ *$//')
+            printf '%s\n' "$final_versions"
+        }
+
+        # Function: Generate matrix JSON from space-separated version list
+        generate_matrix_json() {
+            local versions="$1"
+
+            if [[ -z "$versions" ]]; then
+                echo '{"python-version": []}'
+                return 0
+            fi
+
+            # Use jq to properly construct JSON array
+            echo "$versions" | tr ' ' '\n' | jq -R . | jq -s -c '{"python-version": .}'
+        }
+
+        # Function: Get the latest/build version from a list of versions
+        get_build_version() {
+            local versions="$1"
+
+            if [[ -z "$versions" ]]; then
+                return 1
+            fi
+
+            # Sort and get the last (highest) version
+            local sorted_versions
+            sorted_versions=$(sort_versions "$versions")
+            echo "$sorted_versions" | tr ' ' '\n' | tail -1
+        }
+
+        # Function: Validate that all versions have correct format
+        validate_version_format() {
+            local versions="$1"
+
+            for version in $versions; do
+                if [[ ! "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                    echo "Invalid version format: '$version'" >&2
+                    return 1
+                fi
+            done
+
+            return 0
+        }
+
+        # Function: Validate JSON format using jq
+        validate_json_format() {
+            local json="$1"
+
+            if echo "$json" | jq -e . >/dev/null 2>&1; then
+                return 0
+            else
+                return 1
+            fi
+        }
+
+        ### Main execution starts here ###
+
+        # Get supported Python versions
+        if SUPPORTED_VERSIONS=$(fetch_python_data "$TIMEOUT" "$RETRIES" "versions"); then
+          if [[ "$OFFLINE_MODE" == "true" ]]; then
+              echo "Using internal supported Python versions (offline mode) 📴"
+          else
+              echo "Retrieved supported Python versions from API service 🌍"
+          fi
+        else
+          echo "Unable to retrieve supported Python versions, using internal list ⚠️"
+          SUPPORTED_VERSIONS="$INTERNAL_SUPPORTED_VERSIONS"
+        fi
+        echo "Supported versions: $SUPPORTED_VERSIONS"
+
+        # Extract requires-python constraint
+        REQUIRES_PYTHON=""
+        if command -v python3 >/dev/null 2>&1; then
+            if REQUIRES_PYTHON=$(extract_requires_python_python "$PYPROJECT_FILE"); then
+              echo "Found requires-python constraint (via Python): $REQUIRES_PYTHON"
+            fi
+        fi
+
+        # Fall back to grep/sed parsing if Python parsing failed
+        if [[ -z "$REQUIRES_PYTHON" ]]; then
+            if REQUIRES_PYTHON=$(extract_requires_python_fallback "$PYPROJECT_FILE"); then
+              echo "Found requires-python constraint (via fallback): $REQUIRES_PYTHON"
+            fi
+        fi
+
+        # Extract classifiers fallback
+        CLASSIFIERS=""
         if CLASSIFIERS=$(extract_classifiers_fallback "$PYPROJECT_FILE"); then
-          echo "📋 Found Programming Language classifiers: $CLASSIFIERS"
-          echo "classifiers=$CLASSIFIERS" >> "$GITHUB_ENV"
-        else
-          echo "classifiers=" >> "$GITHUB_ENV"
+          echo "Programming Language classifiers: $CLASSIFIERS"
         fi
 
         # Check if any constraints were found
         if [[ -z "$REQUIRES_PYTHON" && -z "$CLASSIFIERS" ]]; then
-          echo "⚠️  No Python version constraints found"
+          echo "Error: No Python version constraints found in $PYPROJECT_FILE ❌"
+          exit 1
         fi
 
-    - id: parse
-      name: "Process and determine supported Python versions"
-      shell: "bash"
-      run: |
-        # Process and transform extracted Python versions using shared utilities
-        set -o pipefail
+        # Process constraints and determine requested versions
+        REQUESTED_PYTHON_VERSIONS=""
 
-        ALL_SUPPORTED_VERSIONS="${{ env.all_supported_versions }}"
-        VERSIONS_SOURCE="${{ env.versions_source }}"
-        PYPROJECT_FILE="${{ env.path_prefix }}/pyproject.toml"
+        # Try requires-python first
+        if [[ -n "$REQUIRES_PYTHON" ]]; then
+            if REQUESTED_PYTHON_VERSIONS=$(parse_version_constraint "$REQUIRES_PYTHON" "$SUPPORTED_VERSIONS"); then
+                echo "🔍 Processed requires-python constraint successfully"
+                # Clean up whitespace
+                REQUESTED_PYTHON_VERSIONS=$(echo "$REQUESTED_PYTHON_VERSIONS" | sed 's/^ *//' | sed 's/ *$//')
+            fi
+        fi
 
-        # Source shared constraint parsing utilities
-        # shellcheck source=lib/constraint_utils.sh
-        source "$GITHUB_ACTION_PATH/lib/constraint_utils.sh"
+        # Fall back to classifiers if no versions from requires-python
+        if [[ -z "$REQUESTED_PYTHON_VERSIONS" && -n "$CLASSIFIERS" ]]; then
+            REQUESTED_PYTHON_VERSIONS="$CLASSIFIERS"
+            echo "Using Programming Language classifiers fallback ⏪"
+        fi
 
-        # Use shared utility to process Python constraints
-        if PYTHON_VERSIONS=$(process_python_constraints "$PYPROJECT_FILE" \
-                           "$ALL_SUPPORTED_VERSIONS"); then
-          echo "🔍 Processed Python version constraints successfully"
+        # Validate results
+        if [[ -z "$REQUESTED_PYTHON_VERSIONS" ]]; then
+            echo "Error: Failed to determine Python versions from constraints ❌"
+            exit 1
+        fi
+
+        if ! validate_version_format "$REQUESTED_PYTHON_VERSIONS"; then
+            echo "Error: Invalid version format detected ❌"
+            echo "Versions: $REQUESTED_PYTHON_VERSIONS"
+            exit 1
+        fi
+
+        echo "Python versions from constraints: $REQUESTED_PYTHON_VERSIONS"
+
+        # Handle EOL versions based on eol_behaviour setting
+        FINAL_PYTHON_VERSIONS=$(handle_eol_versions "$REQUESTED_PYTHON_VERSIONS" "$EOL_BEHAVIOUR" "$TIMEOUT" "$RETRIES")
+
+        # Validate final results
+        if [[ -z "$FINAL_PYTHON_VERSIONS" ]]; then
+            echo "Error: No supported Python versions after EOL processing ❌"
+            exit 1
+        fi
+
+        # Sort and clean final versions
+        FINAL_PYTHON_VERSIONS=$(sort_versions "$FINAL_PYTHON_VERSIONS")
+
+        # Generate build version and matrix JSON
+        if BUILD_PYTHON=$(get_build_version "$FINAL_PYTHON_VERSIONS"); then
+          echo "Build Python: $BUILD_PYTHON"
         else
-          echo "❌ Failed to determine Python versions from constraints"
+          echo "Error: Failed to determine build Python version ❌"
           exit 1
         fi
 
-        # Generate build version and matrix JSON using shared utilities
-        if BUILD_PYTHON=$(get_build_version "$PYTHON_VERSIONS"); then
-          echo "🐍 Build Python determined: $BUILD_PYTHON"
+        if MATRIX_JSON=$(generate_matrix_json "$FINAL_PYTHON_VERSIONS") && \
+          validate_json_format "$MATRIX_JSON"; then
+          echo "Matrix JSON generated successfully"
         else
-          echo "❌ Failed to determine build Python version"
-          exit 1
-        fi
-
-        if MATRIX_JSON=$(generate_matrix_json "$PYTHON_VERSIONS"); then
-          echo "🔧 Matrix JSON generated successfully"
-        else
-          echo "❌ Failed to generate matrix JSON"
-          exit 1
-        fi
-
-        # Final validation using shared utilities
-        if ! validate_version_format "$PYTHON_VERSIONS"; then
-          echo "❌ Invalid version format detected in: $PYTHON_VERSIONS"
-          exit 1
-        fi
-
-        if ! validate_json_format "$MATRIX_JSON"; then
-          echo "❌ Generated invalid JSON format"
+          echo "Error: Failed to generate matrix JSON ❌"
           exit 1
         fi
 
         # Set outputs
         echo "build_python=$BUILD_PYTHON" >> "$GITHUB_OUTPUT"
-        echo "matrix_json=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+        {
+          echo "matrix_json<<__PY_MATRIX_JSON__"
+          echo "$MATRIX_JSON"
+          echo "__PY_MATRIX_JSON__"
+        } >> "$GITHUB_OUTPUT"
+        echo "supported_versions=$FINAL_PYTHON_VERSIONS" >> "$GITHUB_OUTPUT"
 
         # Final clean output
-        echo "✅ Python version analysis complete"
-        echo "🐍 Build Python: $BUILD_PYTHON"
-        echo "📊 Supported versions: $PYTHON_VERSIONS"
-        echo "🔧 Matrix JSON: $MATRIX_JSON"
+        echo "✅ Build Python: $BUILD_PYTHON"
+        echo "✅ Supported versions: $FINAL_PYTHON_VERSIONS"
+        echo "✅ Matrix JSON: $MATRIX_JSON"

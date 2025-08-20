@@ -74,6 +74,38 @@ log_section() {
     echo -e "\n${CYAN}=== $1 ===${NC}"
 }
 
+# Helper: count versions in a space-separated string
+count_versions() {
+    local versions="$1"
+    if [ -z "$versions" ]; then
+        echo 0
+    else
+        # shellcheck disable=SC2086
+        set -- $versions
+        echo $#
+    fi
+}
+
+# Helper: get first (minimum) version from a space-separated list
+first_version() {
+    local versions="$1"
+    echo "$versions" | awk '{print $1}'
+}
+
+# Helper: simple equality assertion
+assert_equal() {
+    local name="$1"
+    local expected="$2"
+    local actual="$3"
+    if [ "$expected" = "$actual" ]; then
+        log_success "$name OK (expected '$expected')"
+        return 0
+    else
+        log_error "$name MISMATCH (expected '$expected', got '$actual')"
+        return 1
+    fi
+}
+
 # Function to extract metadata from fixture files
 extract_metadata() {
     local file="$1"
@@ -154,7 +186,21 @@ PYTHON_VERSIONS=$PYTHON_VERSIONS"
             log_error "$test_name - Expected test to fail but it succeeded"
             test_passed=false
         else
-            log_success "$test_name - Correctly failed as expected"
+            # Optionally validate expected error message
+            local expected_error
+            expected_error=$(extract_metadata "$fixture_file" "EXPECTED_ERROR")
+            if [ -n "$expected_error" ]; then
+                if echo "$result" | grep -q "$expected_error"; then
+                    log_success "$test_name - Correctly failed with expected error"
+                else
+                    log_error "$test_name - Failed, but error did not match expectation"
+                    echo "   Expected error to contain: $expected_error"
+                    echo "   Actual: $result"
+                    test_passed=false
+                fi
+            else
+                log_success "$test_name - Correctly failed as expected"
+            fi
         fi
     else
         if [ $exit_code -ne 0 ]; then
@@ -168,6 +214,40 @@ PYTHON_VERSIONS=$PYTHON_VERSIONS"
             log_success "$test_name"
             echo "   Build Python: $build_python"
             echo "   All versions: $python_versions"
+
+            # Validate against optional metadata expectations
+            local expected_exact expected_min expected_count
+            expected_exact=$(extract_metadata "$fixture_file" "EXPECTED_EXACT_VERSION")
+            expected_min=$(extract_metadata "$fixture_file" "EXPECTED_MIN_VERSION")
+            expected_count=$(extract_metadata "$fixture_file" "EXPECTED_VERSIONS_COUNT")
+
+            # Exact version expectation
+            if [ -n "$expected_exact" ]; then
+                if ! assert_equal "Exact version" "$expected_exact" "$python_versions"; then
+                    test_passed=false
+                fi
+                if ! assert_equal "Build version" "$expected_exact" "$build_python"; then
+                    test_passed=false
+                fi
+            fi
+
+            # Minimum version expectation
+            if [ -n "$expected_min" ]; then
+                local actual_min
+                actual_min=$(first_version "$python_versions")
+                if ! assert_equal "Minimum version" "$expected_min" "$actual_min"; then
+                    test_passed=false
+                fi
+            fi
+
+            # Count expectation
+            if [ -n "$expected_count" ]; then
+                local actual_count
+                actual_count=$(count_versions "$python_versions")
+                if ! assert_equal "Versions count" "$expected_count" "$actual_count"; then
+                    test_passed=false
+                fi
+            fi
         fi
     fi
 

@@ -31,7 +31,7 @@ jobs:
           egress-policy: 'audit'
 
       - name: 'Checkout repository'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: 'Run comprehensive test suite'
         run: |
@@ -47,13 +47,15 @@ jobs:
     timeout-minutes: 8
     steps:
       - name: 'Checkout repository'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: 'Checkout sample project repository'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: 'lfreleng-actions/test-python-project'
           path: 'test-python-project'
+
+      # yamllint disable rule:line-length
 
       - name: 'Test External Project'
         id: test-external
@@ -64,7 +66,11 @@ jobs:
       - name: 'Validate External Project Output'
         run: |
           echo "Build Python: '${{ steps.test-external.outputs.build_python }}'"
-          echo "Matrix JSON: '${{ steps.test-external.outputs.matrix_json }}'"
+
+          # Use the raw matrix_json output and compact it with jq for consistent comparison
+          actual_json=$(echo '${{ steps.test-external.outputs.matrix_json }}' | jq -c .)
+          echo "Matrix JSON: '$actual_json'"
+
           # Validate that outputs are not empty
           if [ -z "${{ steps.test-external.outputs.build_python }}" ]; then
             echo "Error: build_python output is empty"
@@ -75,6 +81,36 @@ jobs:
             exit 1
           fi
 
+          # Validate matrix_json contains only valid Python versions (no text values)
+          # Extract the python-version array and check each element is a valid version number
+          # yamllint disable-line rule:line-length
+          if ! echo "$actual_json" | jq -e '.["python-version"] | type == "array"' >/dev/null; then
+            echo "Error: matrix_json does not contain a python-version array"
+            exit 1
+          fi
+
+          # Check that all array elements are valid version strings (X.Y format)
+          # yamllint disable-line rule:line-length
+          invalid_versions=$(echo "$actual_json" | jq -r '.["python-version"][] | select(test("^[0-9]+\\.[0-9]+$") | not)')
+          if [ -n "$invalid_versions" ]; then
+            echo "Error: matrix_json contains invalid version entries:"
+            echo "$invalid_versions"
+            echo "Expected format: only numeric versions like '3.11', '3.12'"
+            exit 1
+          fi
+
+          # For test-python-project, we expect Python 3.11 and 3.12 based on requires-python = "<3.13,>=3.11"
+          # yamllint disable-line rule:line-length
+          expected_json='{"python-version":["3.11","3.12"]}'
+          if [ "$expected_json" != "$actual_json" ]; then
+            echo "Error: matrix_json mismatch for test-python-project"
+            echo "Expected: $expected_json"
+            echo "Actual:   $actual_json"
+            exit 1
+          fi
+
+          echo "External repository test passed ✅"
+
   ### Test Missing pyproject.toml ###
   test-missing-pyproject:
     name: 'Test Missing pyproject.toml'
@@ -84,7 +120,7 @@ jobs:
     timeout-minutes: 8
     steps:
       - name: 'Checkout repository'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: 'Create empty test directory'
         run: mkdir -p empty-test-dir
@@ -103,3 +139,75 @@ jobs:
             exit 1
           fi
           echo "Test correctly failed due to missing pyproject.toml"
+
+  ### Test Poetry Fixtures ###
+  test-poetry-fixtures:
+    name: 'Test Poetry Fixtures'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: poetry-caret
+            file: tests/fixtures/pyproject_poetry_caret.toml
+            expected_versions: "3.10 3.11 3.12 3.13"
+            expected_build: "3.13"
+          - name: poetry-compatible
+            file: tests/fixtures/pyproject_poetry_compatible.toml
+            expected_versions: "3.11"
+            expected_build: "3.11"
+          - name: poetry-exact
+            file: tests/fixtures/pyproject_poetry_exact.toml
+            expected_versions: "3.12"
+            expected_build: "3.12"
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: 'Prepare fixture workspace'
+        run: |
+          set -euo pipefail
+          workdir="poetry-fixture-${{ matrix.name }}"
+          mkdir -p "$workdir"
+          cp "${{ matrix.file }}" "$workdir/pyproject.toml"
+          echo "WORKDIR=$workdir" >> "$GITHUB_ENV"
+
+      - name: 'Run action on Poetry fixture (offline)'
+        id: run
+        uses: ./
+        with:
+          path_prefix: '${{ env.WORKDIR }}/'
+          offline_mode: 'true'
+
+      - name: 'Assert outputs for Poetry fixture'
+        # yamllint disable rule:line-length
+        run: |
+          echo "Supported versions: '${{ steps.run.outputs.supported_versions }}'"
+          echo "Build Python: '${{ steps.run.outputs.build_python }}'"
+
+          # Use the raw matrix_json output and compact it with jq for consistent comparison
+          actual_json=$(echo '${{ steps.run.outputs.matrix_json }}' | jq -c .)
+          echo "Matrix JSON: '$actual_json'"
+
+          if [ "${{ steps.run.outputs.build_python }}" != "${{ matrix.expected_build }}" ]; then
+            echo "Error: build_python mismatch (expected '${{ matrix.expected_build }}')"
+            exit 1
+          fi
+          if [ "${{ steps.run.outputs.supported_versions }}" != "${{ matrix.expected_versions }}" ]; then
+            echo "Error: supported_versions mismatch (expected '${{ matrix.expected_versions }}')"
+            exit 1
+          fi
+
+          # Construct expected JSON using jq to ensure formatting matches
+          expected_json=$(printf '%s\n' "${{ matrix.expected_versions }}" | tr ' ' '\n' | jq -R . | jq -s -c '{"python-version": .}')
+
+          if [ "$expected_json" != "$actual_json" ]; then
+            echo "Error: matrix_json mismatch"
+            echo "Expected: $expected_json"
+            echo "Actual:   $actual_json"
+            exit 1
+          fi
+          echo "Poetry fixture '${{ matrix.name }}' passed ✅"

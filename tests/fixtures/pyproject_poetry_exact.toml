@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2025 The Linux Foundation
+
+# TEST_METADATA:
+# TEST_NAME: Poetry exact version pin (==3.12)
+# TEST_TYPE: poetry-requires-python
+# SHOULD_FAIL: false
+# EXPECTED_EXACT_VERSION: 3.12
+# EXPECTED_VERSIONS_COUNT: 1
+# DESCRIPTION: Tests Poetry exact version pin via [tool.poetry.dependencies].python resolving to only 3.12
+
+[tool.poetry]
+name = "test-poetry-exact"
+version = "1.0.0"
+description = "Test project with Poetry exact Python version pin"
+authors = ["LF RelEng <releng@example.org>"]
+license = "Apache-2.0"
+
+[tool.poetry.dependencies]
+# Exact pin should resolve to only Python 3.12
+python = "==3.12"
+tomli = "^2.0.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
