@@ -154,7 +154,7 @@ test_fixture_with_action() {
     pushd "$test_dir" >/dev/null 2>&1
 
     # Simulate the action's core logic using shared utilities
-    local ALL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13"
+    local ALL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13 3.14"
     local PYTHON_VERSIONS=""
 
     # Use shared utility to process Python constraints
@@ -269,7 +269,7 @@ test_eol_awareness() {
     log_test_start "EOL Version Filtering"
 
     # Test that our static version list excludes EOL versions
-    local supported_versions="3.9 3.10 3.11 3.12 3.13"
+    local supported_versions="3.9 3.10 3.11 3.12 3.13 3.14"
 
     echo "   Test versions: $supported_versions"
 
@@ -300,7 +300,7 @@ test_network_fallback() {
     log_test_start "Static Fallback Mechanism"
 
     # Verify static fallback works
-    local static_versions="3.9 3.10 3.11 3.12 3.13"
+    local static_versions="3.9 3.10 3.11 3.12 3.13 3.14"
 
     if [ -n "$static_versions" ] && echo "$static_versions" | grep -q "3.9"; then
         log_success "Static Fallback - Versions available when network unavailable"

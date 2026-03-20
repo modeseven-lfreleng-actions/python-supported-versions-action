@@ -6,7 +6,7 @@
 # TEST_TYPE: requires-python
 # SHOULD_FAIL: false
 # EXPECTED_MIN_VERSION: 3.10
-# EXPECTED_VERSIONS_COUNT: 4
+# EXPECTED_VERSIONS_COUNT: 5
 # DESCRIPTION: Tests basic >=3.10 constraint with dynamic EOL-aware filtering
 
 [project]

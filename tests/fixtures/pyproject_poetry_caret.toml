@@ -6,7 +6,7 @@
 # TEST_TYPE: poetry-requires-python
 # SHOULD_FAIL: false
 # EXPECTED_MIN_VERSION: 3.10
-# EXPECTED_VERSIONS_COUNT: 4
+# EXPECTED_VERSIONS_COUNT: 5
 # DESCRIPTION: Tests Poetry caret constraint extraction via [tool.poetry.dependencies].python and normalization to >=3.10,<4.0
 
 [tool.poetry]
@@ -17,7 +17,7 @@ authors = ["LF RelEng <releng@example.org>"]
 license = "Apache-2.0"
 
 [tool.poetry.dependencies]
-# This caret constraint should resolve to Python 3.10, 3.11, 3.12, 3.13
+# This caret constraint should resolve to Python 3.10, 3.11, 3.12, 3.13, 3.14
 python = "^3.10"
 tomli = "^2.0.1"
 
