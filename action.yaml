@@ -73,7 +73,7 @@ runs:
 
 
         # Internal list of supported Python versions (requires periodic update)
-        INTERNAL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13"
+        INTERNAL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13 3.14"
 
         # Setup and validate environment
         path_prefix="${INPUT_PATH_PREFIX}"

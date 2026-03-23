@@ -155,8 +155,8 @@ jobs:
         include:
           - name: poetry-caret
             file: tests/fixtures/pyproject_poetry_caret.toml
-            expected_versions: "3.10 3.11 3.12 3.13"
-            expected_build: "3.13"
+            expected_versions: "3.10 3.11 3.12 3.13 3.14"
+            expected_build: "3.14"
           - name: poetry-compatible
             file: tests/fixtures/pyproject_poetry_compatible.toml
             expected_versions: "3.11"

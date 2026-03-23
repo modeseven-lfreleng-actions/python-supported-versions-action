@@ -12,7 +12,7 @@
 # This is used as a fallback when network access or required tools are unavailable.
 get_static_python_versions() {
   # Update periodically as new versions are released
-  echo "3.9 3.10 3.11 3.12 3.13"
+  echo "3.9 3.10 3.11 3.12 3.13 3.14"
 }
 
 # Internal: check if a command exists in PATH.

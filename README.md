@@ -155,13 +155,13 @@ A workflow calling this action will produce the output below:
 
 ```console
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.9 3.10 3.11 3.12 3.13
+Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
 Found requires-python constraint (via fallback): >=3.10
 🔍 Processed requires-python constraint
-Python versions from constraints: 3.10 3.11 3.12 3.13
-✅ Build Python: 3.13
-✅ Supported versions: 3.10 3.11 3.12 3.13
-✅ Matrix JSON: {"python-version":["3.10","3.11","3.12","3.13"]}
+Python versions from constraints: 3.10 3.11 3.12 3.13 3.14
+✅ Build Python: 3.14
+✅ Supported versions: 3.10 3.11 3.12 3.13 3.14
+✅ Matrix JSON: {"python-version":["3.10","3.11","3.12","3.13","3.14"]}
 ```
 
 ## Implementation Details
@@ -277,6 +277,7 @@ back to a static definition of supported Python versions:
 - Python 3.11
 - Python 3.12
 - Python 3.13
+- Python 3.14
 
 This ensures the action remains functional even in environments without
 internet access, while providing the most current EOL information
@@ -320,7 +321,7 @@ The action includes an `offline_mode` input for environments without internet ac
 When using offline mode:
 
 - Network requests do not occur
-- Uses internal static version list: 3.9, 3.10, 3.11, 3.12, 3.13
+- Uses internal static version list: 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
 - EOL filtering does not occur
 - Perfect for air-gapped or restricted network environments
 
@@ -353,21 +354,21 @@ When dynamic fetching with EOL filtering is successful:
 
 ```text
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.9 3.10 3.11 3.12 3.13
+Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
 ```
 
 When using offline mode:
 
 ```text
 Using internal supported Python versions (offline mode) 📴
-Supported versions: 3.9 3.10 3.11 3.12 3.13
+Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
 ```
 
 When the endoflife.date API is unavailable:
 
 ```text
 Unable to retrieve supported Python versions, using internal list ⚠️
-Supported versions: 3.9 3.10 3.11 3.12 3.13
+Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
 ```
 
 ## Testing
@@ -408,6 +409,7 @@ Current Python EOL schedule (as of 2025):
 - **Python 3.11**: EOL October 31, 2027 (included)
 - **Python 3.12**: EOL October 31, 2028 (included)
 - **Python 3.13**: EOL October 31, 2029 (included)
+- **Python 3.14**: EOL October 31, 2030 (included)
 
 The action automatically updates this information by fetching current EOL data
 from endoflife.date, ensuring accuracy without manual intervention.
