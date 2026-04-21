@@ -99,11 +99,16 @@ jobs:
             exit 1
           fi
 
-          # For test-python-project, validate against the expected Python versions.
-          # The expected versions are stored in the EXPECTED_VERSION_JSON GitHub variable
-          # to avoid hardcoding and allow easy updates when upstream project support changes.
+          # For test-python-project, derive expected Python versions directly
+          # from the classifiers in the checked-out pyproject.toml. This avoids
+          # reliance on the repository-level EXPECTED_VERSION_JSON variable,
+          # which is not reliably populated for pull_request events from forks
+          # and also requires manual updates whenever the upstream project's
+          # classifiers change. Parsing the source of truth keeps the test
+          # self-contained and drift-free.
           # yamllint disable-line rule:line-length
-          expected_json='${{ vars.EXPECTED_VERSION_JSON }}'
+          expected_json=$(grep -oE 'Programming Language :: Python :: [0-9]+\.[0-9]+' test-python-project/pyproject.toml | awk -F':: ' '{print $NF}' | sort -V | jq -R . | jq -s -c '{"python-version": .}')
+          echo "Expected (derived from classifiers): '$expected_json'"
           if [ "$expected_json" != "$actual_json" ]; then
             echo "Error: matrix_json mismatch for test-python-project"
             echo "Expected: $expected_json"
