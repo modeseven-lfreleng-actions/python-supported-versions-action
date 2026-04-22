@@ -106,8 +106,46 @@ jobs:
           # and also requires manual updates whenever the upstream project's
           # classifiers change. Parsing the source of truth keeps the test
           # self-contained and drift-free.
+          pyproject='test-python-project/pyproject.toml'
+          if [ ! -f "$pyproject" ]; then
+            echo "Error: expected file not found: $pyproject"
+            exit 1
+          fi
+
+          # Mirror the action's own parsing behaviour so this test
+          # tracks the action's *final* sorted output:
+          #   * Strip commented lines before matching classifiers, as
+          #     the action does in its classifier fallback path (see
+          #     'extract_classifiers_fallback' in both action.yaml and
+          #     lib/constraint_utils.sh). Without this, a commented-out
+          #     classifier line in pyproject.toml would produce a false
+          #     mismatch.
+          #   * Use the same portable numeric sort the action applies
+          #     via its 'sort_versions' helper (also in action.yaml and
+          #     lib/constraint_utils.sh): 'sort -t. -k1,1n -k2,2n'. This
+          #     avoids relying on GNU-specific 'sort -V' and keeps the
+          #     ordering identical to what the action emits in
+          #     matrix_json.
+          #   * Deduplicate with awk (first-seen wins) instead of
+          #     'sort -u' so the numeric sort order is preserved.
+          #
+          # GitHub Actions runs bash with 'set -eo pipefail' by default,
+          # which would make the assignment below abort the step if
+          # 'grep' finds no matches (exit 1) before our explicit
+          # empty-check can print a user-friendly error. Append
+          # '|| true' to tolerate a no-match exit, then rely on the
+          # explicit '[ -z ... ]' check to diagnose extraction failures
+          # distinctly from genuine action/output disagreements.
           # yamllint disable-line rule:line-length
-          expected_json=$(grep -oE 'Programming Language :: Python :: [0-9]+\.[0-9]+' test-python-project/pyproject.toml | awk -F':: ' '{print $NF}' | sort -V | jq -R . | jq -s -c '{"python-version": .}')
+          classifier_versions=$(grep -v '^[[:space:]]*#' "$pyproject" | grep -oE 'Programming Language :: Python :: [0-9]+\.[0-9]+' | awk -F':: ' '{print $NF}' | sort -t. -k1,1n -k2,2n | awk '!seen[$0]++' || true)
+          if [ -z "$classifier_versions" ]; then
+            echo "Error: no 'Programming Language :: Python :: X.Y' classifiers found in $pyproject"
+            echo "Cannot derive expected python-version list; check the upstream project or the extraction regex."
+            exit 1
+          fi
+
+          # yamllint disable-line rule:line-length
+          expected_json=$(printf '%s\n' "$classifier_versions" | jq -R . | jq -s -c '{"python-version": .}')
           echo "Expected (derived from classifiers): '$expected_json'"
           if [ "$expected_json" != "$actual_json" ]; then
             echo "Error: matrix_json mismatch for test-python-project"
