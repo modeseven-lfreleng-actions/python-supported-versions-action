@@ -156,34 +156,65 @@ jobs:
 
           echo "External repository test passed ✅"
 
-  ### Test Missing pyproject.toml ###
+  ### Test Missing project metadata files (fallback behaviour) ###
   test-missing-pyproject:
-    name: 'Test Missing pyproject.toml'
+    name: 'Test Missing project metadata files'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 8
     steps:
       - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: 'Create empty test directory'
         run: mkdir -p empty-test-dir
 
-      - name: 'Test missing pyproject.toml'
+      - name: 'Run action against empty directory'
         id: test-missing
         uses: ./
         with:
           path_prefix: 'empty-test-dir/'
-        continue-on-error: true
 
-      - name: 'Validate missing pyproject.toml failure'
+      - name: 'Validate fallback outputs'
+        env:
+          OUTCOME: ${{ steps.test-missing.outcome }}
+          VERSIONS_SOURCE: ${{ steps.test-missing.outputs.versions_source }}
+          BUILD_PYTHON: ${{ steps.test-missing.outputs.build_python }}
+          MATRIX_JSON: ${{ steps.test-missing.outputs.matrix_json }}
         run: |
-          if [ "${{ steps.test-missing.outcome }}" != "failure" ]; then
-            echo "Error: Expected test to fail due to missing pyproject.toml"
+          set -euo pipefail
+          if [ "$OUTCOME" != "success" ]; then
+            echo "::error::Action step did not succeed (outcome=$OUTCOME)"
             exit 1
           fi
-          echo "Test correctly failed due to missing pyproject.toml"
+          case "$VERSIONS_SOURCE" in
+            eol-fallback|static-fallback) ;;
+            *)
+              echo "::error::Unexpected versions_source: '$VERSIONS_SOURCE' (expected eol-fallback or static-fallback)"
+              exit 1
+              ;;
+          esac
+          if ! printf '%s' "$BUILD_PYTHON" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+            echo "::error::build_python is empty or malformed: '$BUILD_PYTHON'"
+            exit 1
+          fi
+          if [ -z "$MATRIX_JSON" ]; then
+            echo "::error::matrix_json is empty"
+            exit 1
+          fi
+          # Must parse as JSON, must have a non-empty python-version array.
+          versions_count=$(printf '%s' "$MATRIX_JSON" | jq -r '."python-version" | length')
+          if [ -z "$versions_count" ] || [ "$versions_count" -lt 1 ]; then
+            echo "::error::matrix_json has empty or missing python-version array: '$MATRIX_JSON'"
+            exit 1
+          fi
+          echo "Fallback behaviour validated ✅"
+          echo "  outcome=$OUTCOME"
+          echo "  versions_source=$VERSIONS_SOURCE"
+          echo "  build_python=$BUILD_PYTHON"
+          echo "  matrix_json=$MATRIX_JSON"
 
   ### Test Poetry Fixtures ###
   test-poetry-fixtures:
