@@ -383,6 +383,7 @@ run_unit_tests() {
     log_section "Unit Tests"
 
     local unit_test_script="$SCRIPT_DIR/unit/test_constraint_utils.sh"
+    local legacy_test_script="$SCRIPT_DIR/unit/test_legacy_extractors.sh"
 
     if [[ -f "$unit_test_script" ]]; then
         log_info "Running constraint utilities unit tests"
@@ -394,6 +395,18 @@ run_unit_tests() {
         fi
     else
         log_warning "Unit test script not found: $unit_test_script"
+    fi
+
+    if [[ -f "$legacy_test_script" ]]; then
+        log_info "Running legacy extractors unit tests"
+        if bash "$legacy_test_script"; then
+            log_success "Legacy extractor tests completed successfully"
+        else
+            log_error "Legacy extractor tests failed"
+            exit 1
+        fi
+    else
+        log_warning "Legacy extractor test script not found: $legacy_test_script"
     fi
 }
 

@@ -36,6 +36,10 @@ inputs:
     description: "Disable network lookups and use internal version list only"
     required: false
     default: 'false'
+  default_python_version:
+    description: "Override build_python when falling back to the EOL-aware list"
+    required: false
+    default: ''
 
 outputs:
   build_python:
@@ -48,6 +52,12 @@ outputs:
   supported_versions:
     description: "Space-separated list of all supported Python versions"
     value: "${{ steps.versions.outputs.supported_versions }}"
+  versions_source:
+    description: >-
+      Source of the version data: requires-python, classifiers,
+      setup-cfg-requires, setup-cfg-classifiers, setup-py-requires,
+      setup-py-classifiers, eol-fallback, or static-fallback
+    value: "${{ steps.versions.outputs.versions_source }}"
 
 runs:
   using: "composite"
@@ -61,6 +71,7 @@ runs:
         INPUT_MAX_RETRIES: ${{ inputs.max_retries }}
         INPUT_EOL_BEHAVIOUR: ${{ inputs.eol_behaviour }}
         INPUT_OFFLINE_MODE: ${{ inputs.offline_mode }}
+        INPUT_DEFAULT_PYTHON_VERSION: ${{ inputs.default_python_version }}
       # yamllint disable rule:line-length
       run: |
         # Process and determine supported Python versions
@@ -70,6 +81,7 @@ runs:
         RETRIES="${INPUT_MAX_RETRIES}"
         EOL_BEHAVIOUR="${INPUT_EOL_BEHAVIOUR}"
         OFFLINE_MODE="${INPUT_OFFLINE_MODE}"
+        DEFAULT_PYTHON_VERSION="${INPUT_DEFAULT_PYTHON_VERSION:-}"
 
 
         # Internal list of supported Python versions (requires periodic update)
@@ -97,16 +109,22 @@ runs:
         fi
 
 
-        # Validate directory and pyproject.toml existence
+        # Validate directory existence (project metadata files are optional;
+        # legacy projects may rely on setup.cfg or setup.py, or none at all).
         if [[ ! -d "$path_prefix" ]]; then
           echo 'Error: invalid path/prefix to project directory ❌'
           exit 1
         fi
 
-        if [[ ! -f "$path_prefix/pyproject.toml" ]]; then
-          echo 'Error: missing pyproject.toml file ❌'
-          exit 1
-        fi
+        # Track which metadata files are present for downstream logic.
+        HAS_PYPROJECT='false'
+        HAS_SETUP_CFG='false'
+        HAS_SETUP_PY='false'
+        [[ -f "$path_prefix/pyproject.toml" ]] && HAS_PYPROJECT='true'
+        [[ -f "$path_prefix/setup.cfg" ]] && HAS_SETUP_CFG='true'
+        [[ -f "$path_prefix/setup.py" ]] && HAS_SETUP_PY='true'
+        export HAS_PYPROJECT HAS_SETUP_CFG HAS_SETUP_PY
+        echo "Metadata files: pyproject=$HAS_PYPROJECT setup.cfg=$HAS_SETUP_CFG setup.py=$HAS_SETUP_PY"
 
         # Validate eol_behaviour input
         if [[ "$EOL_BEHAVIOUR" != "warn" && "$EOL_BEHAVIOUR" != "strip" && \
@@ -724,68 +742,75 @@ runs:
 
         ### Main execution starts here ###
 
-        # Get supported Python versions
+        # Source shared library helpers AFTER all inline function definitions.
+        # This ensures the library's unit-tested implementations override the
+        # inline duplicates (parse_version_constraint, sort_versions, ...) so
+        # the layered processor and the inline call sites both go through the
+        # same code path. See PR #107 review.
+        # shellcheck disable=SC1091
+        if [[ -n "${GITHUB_ACTION_PATH:-}" && \
+              -f "$GITHUB_ACTION_PATH/lib/constraint_utils.sh" ]]; then
+          source "$GITHUB_ACTION_PATH/lib/constraint_utils.sh"
+        fi
+
+        # Get supported Python versions and remember whether we got them from
+        # the live API (eol-fallback) or the internal static list (static-fallback).
+        VERSIONS_SOURCE_FALLBACK="eol-fallback"
         if SUPPORTED_VERSIONS=$(fetch_python_data "$TIMEOUT" "$RETRIES" "versions"); then
           if [[ "$OFFLINE_MODE" == "true" ]]; then
               echo "Using internal supported Python versions (offline mode) 📴"
+              VERSIONS_SOURCE_FALLBACK="static-fallback"
           else
               echo "Retrieved supported Python versions from API service 🌍"
           fi
         else
           echo "Unable to retrieve supported Python versions, using internal list ⚠️"
           SUPPORTED_VERSIONS="$INTERNAL_SUPPORTED_VERSIONS"
+          VERSIONS_SOURCE_FALLBACK="static-fallback"
         fi
         echo "Supported versions: $SUPPORTED_VERSIONS"
 
-        # Extract requires-python constraint
-        REQUIRES_PYTHON=""
-        if command -v python3 >/dev/null 2>&1; then
-            if REQUIRES_PYTHON=$(extract_requires_python_python "$PYPROJECT_FILE"); then
-              echo "Found requires-python constraint (via Python): $REQUIRES_PYTHON"
-            fi
-        fi
-
-        # Fall back to grep/sed parsing if Python parsing failed
-        if [[ -z "$REQUIRES_PYTHON" ]]; then
-            if REQUIRES_PYTHON=$(extract_requires_python_fallback "$PYPROJECT_FILE"); then
-              echo "Found requires-python constraint (via fallback): $REQUIRES_PYTHON"
-            fi
-        fi
-
-        # Extract classifiers fallback
-        CLASSIFIERS=""
-        if CLASSIFIERS=$(extract_classifiers_fallback "$PYPROJECT_FILE"); then
-          echo "Programming Language classifiers: $CLASSIFIERS"
-        fi
-
-        # Check if any constraints were found
-        if [[ -z "$REQUIRES_PYTHON" && -z "$CLASSIFIERS" ]]; then
-          echo "Error: No Python version constraints found in $PYPROJECT_FILE ❌"
-          exit 1
-        fi
-
-        # Process constraints and determine requested versions
+        # Try the layered project-side extraction (pyproject.toml → setup.cfg
+        # → setup.py) via the shared library. If the library is not available
+        # for some reason, fall back to the legacy pyproject-only path.
         REQUESTED_PYTHON_VERSIONS=""
+        VERSIONS_SOURCE=""
 
-        # Try requires-python first
-        if [[ -n "$REQUIRES_PYTHON" ]]; then
+        if declare -F process_python_constraints_layered >/dev/null 2>&1; then
+          LAYERED_OUT=""
+          if LAYERED_OUT=$(process_python_constraints_layered "$path_prefix" "$SUPPORTED_VERSIONS"); then
+            REQUESTED_PYTHON_VERSIONS=$(printf '%s\n' "$LAYERED_OUT" | sed -n '1p')
+            VERSIONS_SOURCE=$(printf '%s\n' "$LAYERED_OUT" | sed -n '2p')
+            echo "🔍 Found Python version data via: $VERSIONS_SOURCE"
+          fi
+        elif [[ -f "$PYPROJECT_FILE" ]]; then
+          # Legacy inline path: pyproject-only.
+          REQUIRES_PYTHON=""
+          if command -v python3 >/dev/null 2>&1; then
+            REQUIRES_PYTHON=$(extract_requires_python_python "$PYPROJECT_FILE" || true)
+          fi
+          if [[ -z "$REQUIRES_PYTHON" ]]; then
+            REQUIRES_PYTHON=$(extract_requires_python_fallback "$PYPROJECT_FILE" || true)
+          fi
+          CLASSIFIERS=$(extract_classifiers_fallback "$PYPROJECT_FILE" || true)
+          if [[ -n "$REQUIRES_PYTHON" ]]; then
             if REQUESTED_PYTHON_VERSIONS=$(parse_version_constraint "$REQUIRES_PYTHON" "$SUPPORTED_VERSIONS"); then
-                echo "🔍 Processed requires-python constraint successfully"
-                # Clean up whitespace
-                REQUESTED_PYTHON_VERSIONS=$(echo "$REQUESTED_PYTHON_VERSIONS" | sed 's/^ *//' | sed 's/ *$//')
+              VERSIONS_SOURCE="requires-python"
             fi
-        fi
-
-        # Fall back to classifiers if no versions from requires-python
-        if [[ -z "$REQUESTED_PYTHON_VERSIONS" && -n "$CLASSIFIERS" ]]; then
+          fi
+          if [[ -z "$REQUESTED_PYTHON_VERSIONS" && -n "$CLASSIFIERS" ]]; then
             REQUESTED_PYTHON_VERSIONS="$CLASSIFIERS"
-            echo "Using Programming Language classifiers fallback ⏪"
+            VERSIONS_SOURCE="classifiers"
+          fi
         fi
 
-        # Validate results
+        # If nothing was found, fall back to the EOL-aware (or static)
+        # supported-versions list and emit a warning. Do NOT exit non-zero —
+        # legacy projects with no declared constraint are expected.
         if [[ -z "$REQUESTED_PYTHON_VERSIONS" ]]; then
-            echo "Error: Failed to determine Python versions from constraints ❌"
-            exit 1
+          echo "::warning::No Python version constraint declared in pyproject.toml, setup.cfg or setup.py — falling back to the EOL-aware supported-versions list. Add 'requires-python' (or 'python_requires') to silence this warning."
+          REQUESTED_PYTHON_VERSIONS="$SUPPORTED_VERSIONS"
+          VERSIONS_SOURCE="$VERSIONS_SOURCE_FALLBACK"
         fi
 
         if ! validate_version_format "$REQUESTED_PYTHON_VERSIONS"; then
@@ -795,6 +820,7 @@ runs:
         fi
 
         echo "Python versions from constraints: $REQUESTED_PYTHON_VERSIONS"
+        echo "Versions source: $VERSIONS_SOURCE"
 
         # Handle EOL versions based on eol_behaviour setting
         FINAL_PYTHON_VERSIONS=$(handle_eol_versions "$REQUESTED_PYTHON_VERSIONS" "$EOL_BEHAVIOUR" "$TIMEOUT" "$RETRIES")
@@ -816,6 +842,34 @@ runs:
           exit 1
         fi
 
+        # When falling back to the EOL-aware list and the caller has supplied
+        # a default_python_version, override build_python with it (still emit
+        # the full fallback matrix). Useful for org-wide policy.
+        if [[ -n "$DEFAULT_PYTHON_VERSION" && \
+              ( "$VERSIONS_SOURCE" == "eol-fallback" || \
+                "$VERSIONS_SOURCE" == "static-fallback" ) ]]; then
+          if [[ ! "$DEFAULT_PYTHON_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::warning::Ignoring default_python_version='$DEFAULT_PYTHON_VERSION' (must be in X.Y form)"
+          else
+            # Only override when the requested version is actually present in
+            # the final matrix, so downstream steps that consume build_python
+            # are guaranteed to find it in matrix_json.
+            override_ok='false'
+            for _v in $FINAL_PYTHON_VERSIONS; do
+              if [[ "$_v" == "$DEFAULT_PYTHON_VERSION" ]]; then
+                override_ok='true'
+                break
+              fi
+            done
+            if [[ "$override_ok" == 'true' ]]; then
+              echo "Overriding build_python with default_python_version=$DEFAULT_PYTHON_VERSION (fallback in effect)"
+              BUILD_PYTHON="$DEFAULT_PYTHON_VERSION"
+            else
+              echo "::warning::default_python_version='$DEFAULT_PYTHON_VERSION' is not in the supported matrix [$FINAL_PYTHON_VERSIONS]; keeping computed build_python=$BUILD_PYTHON"
+            fi
+          fi
+        fi
+
         if MATRIX_JSON=$(generate_matrix_json "$FINAL_PYTHON_VERSIONS") && \
           validate_json_format "$MATRIX_JSON"; then
           echo "Matrix JSON generated successfully"
@@ -832,6 +886,7 @@ runs:
           echo "__PY_MATRIX_JSON__"
         } >> "$GITHUB_OUTPUT"
         echo "supported_versions=$FINAL_PYTHON_VERSIONS" >> "$GITHUB_OUTPUT"
+        echo "versions_source=$VERSIONS_SOURCE" >> "$GITHUB_OUTPUT"
 
         # Final clean output
         echo "✅ Build Python: $BUILD_PYTHON"

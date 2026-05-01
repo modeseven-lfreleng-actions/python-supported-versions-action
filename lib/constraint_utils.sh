@@ -312,6 +312,219 @@ get_build_version() {
   echo "$sorted" | tr ' ' '\n' | tail -1
 }
 
+# Extract python_requires (or python-requires) from setup.cfg.
+# Setuptools' declarative config places `python_requires` under [options];
+# pbr / older projects use `python-requires` under [metadata]. Accept either.
+# Returns 0 with the constraint on stdout, 1 if not found.
+extract_setup_cfg_requires_python() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+
+  # Pull lines from the [metadata] AND [options] sections, then find
+  # python_requires / python-requires.
+  local raw
+  raw=$(awk '
+    BEGIN{insec=0}
+    /^[[:space:]]*\[(metadata|options)\][[:space:]]*$/{insec=1; next}
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/{if(insec) insec=0}
+    insec{print}
+  ' "$file" 2>/dev/null | \
+      grep -v '^[[:space:]]*#' | \
+      grep -E '^[[:space:]]*python[_-]requires[[:space:]]*=' | \
+      head -1)
+
+  [[ -n "$raw" ]] || return 1
+
+  # Strip the "key =" prefix, then any wrapping quotes and trailing inline comment / whitespace.
+  local c
+  c=$(printf '%s\n' "$raw" | sed -E 's/^[[:space:]]*python[_-]requires[[:space:]]*=[[:space:]]*//')
+  # Remove trailing inline comment.
+  c=$(printf '%s\n' "$c" | sed -E 's/[[:space:]]+#.*$//')
+  # Strip surrounding single or double quotes if present.
+  c=$(printf '%s\n' "$c" | sed -E "s/^[\"']//; s/[\"']$//")
+  # Trim trailing whitespace.
+  c=$(printf '%s\n' "$c" | sed -E 's/[[:space:]]+$//')
+
+  if [[ -n "$c" ]]; then
+    echo "$c"
+    return 0
+  fi
+  return 1
+}
+
+# Extract Python versions from a setup.cfg [metadata] classifiers (or classifier) block.
+# setup.cfg uses indentation for multi-line list values. Prints space-separated
+# versions in first-seen order, returns 0 if any found.
+extract_setup_cfg_classifiers() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+
+  # Collect the classifier(s) block: a key line `classifier(s) =` followed by
+  # indented continuation lines. A non-indented line ends the block.
+  local block
+  block=$(awk '
+    BEGIN{insec=0; incls=0}
+    /^[[:space:]]*\[metadata\][[:space:]]*$/{insec=1; next}
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/{if(insec){insec=0; incls=0}}
+    insec{
+      if (incls) {
+        if ($0 ~ /^[[:space:]]/) { print; next }
+        else { incls=0 }
+      }
+      if ($0 ~ /^[[:space:]]*classifiers?[[:space:]]*=/) {
+        sub(/^[^=]*=/, "", $0); print; incls=1
+      }
+    }
+  ' "$file" 2>/dev/null) || true
+
+  [[ -n "$block" ]] || return 1
+
+  local versions
+  versions=$(printf '%s\n' "$block" | \
+    grep -v '^[[:space:]]*#' | \
+    grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+' | \
+    grep -oE '[0-9]+\.[0-9]+' | \
+    awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//')
+
+  if [[ -n "$versions" ]]; then
+    echo "$versions"
+    return 0
+  fi
+  return 1
+}
+
+# Best-effort regex extraction of python_requires=... from setup.py.
+extract_setup_py_requires_python() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+
+  local c
+  # Match python_requires="..." or python_requires='...'; ignore commented lines.
+  c=$(grep -v '^[[:space:]]*#' "$file" 2>/dev/null | \
+      grep -oE "python_requires[[:space:]]*=[[:space:]]*['\"][^'\"]+['\"]" | \
+      head -1 | \
+      sed -E "s/python_requires[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"]/\1/")
+
+  if [[ -n "$c" ]]; then
+    echo "$c"
+    return 0
+  fi
+  return 1
+}
+
+# Best-effort regex extraction of Programming Language :: Python :: X.Y from setup.py.
+extract_setup_py_classifiers() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+
+  local versions
+  versions=$(grep -v '^[[:space:]]*#' "$file" 2>/dev/null | \
+    grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+' | \
+    grep -oE '[0-9]+\.[0-9]+' | \
+    awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//')
+
+  if [[ -n "$versions" ]]; then
+    echo "$versions"
+    return 0
+  fi
+  return 1
+}
+
+# Filter a space-separated list of X.Y versions to those present in available.
+_filter_to_available() {
+  local candidates="$1" available="$2" out="" v a
+  for v in $candidates; do
+    for a in $available; do
+      if [[ "$v" == "$a" ]]; then
+        out="$out $v"
+        break
+      fi
+    done
+  done
+  out=$(echo "$out" | _trim)
+  [[ -n "$out" ]] || return 1
+  sort_versions "$out"
+}
+
+# Layered constraint processing across pyproject.toml, setup.cfg, setup.py.
+# Usage: process_python_constraints_layered <path_prefix> <available_versions>
+# On success, prints two lines:
+#   <space-separated versions>
+#   <source token>
+# Source tokens:
+#   requires-python | classifiers |
+#   setup-cfg-requires | setup-cfg-classifiers |
+#   setup-py-requires | setup-py-classifiers
+# Returns 0 on success, 1 if no constraint was found in any of the three files.
+process_python_constraints_layered() {
+  local prefix="$1"
+  local available="$2"
+  prefix="${prefix%/}"
+  [[ -n "$available" ]] || return 1
+
+  local pyproject="$prefix/pyproject.toml"
+  local setup_cfg="$prefix/setup.cfg"
+  local setup_py="$prefix/setup.py"
+
+  local constraint versions classifiers
+
+  # 1) pyproject.toml requires-python / poetry, then classifiers
+  if [[ -f "$pyproject" ]]; then
+    if constraint=$(extract_requires_python_constraint "$pyproject"); then
+      if versions=$(parse_version_constraint "$constraint" "$available"); then
+        echo "$versions"
+        echo "requires-python"
+        return 0
+      fi
+    fi
+    if classifiers=$(extract_classifiers_fallback "$pyproject"); then
+      if versions=$(_filter_to_available "$classifiers" "$available"); then
+        echo "$versions"
+        echo "classifiers"
+        return 0
+      fi
+    fi
+  fi
+
+  # 2) setup.cfg python_requires / classifiers
+  if [[ -f "$setup_cfg" ]]; then
+    if constraint=$(extract_setup_cfg_requires_python "$setup_cfg"); then
+      if versions=$(parse_version_constraint "$constraint" "$available"); then
+        echo "$versions"
+        echo "setup-cfg-requires"
+        return 0
+      fi
+    fi
+    if classifiers=$(extract_setup_cfg_classifiers "$setup_cfg"); then
+      if versions=$(_filter_to_available "$classifiers" "$available"); then
+        echo "$versions"
+        echo "setup-cfg-classifiers"
+        return 0
+      fi
+    fi
+  fi
+
+  # 3) setup.py python_requires / classifiers
+  if [[ -f "$setup_py" ]]; then
+    if constraint=$(extract_setup_py_requires_python "$setup_py"); then
+      if versions=$(parse_version_constraint "$constraint" "$available"); then
+        echo "$versions"
+        echo "setup-py-requires"
+        return 0
+      fi
+    fi
+    if classifiers=$(extract_setup_py_classifiers "$setup_py"); then
+      if versions=$(_filter_to_available "$classifiers" "$available"); then
+        echo "$versions"
+        echo "setup-py-classifiers"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
 # High-level function:
 # - Try requires-python constraint; parse against available versions
 # - Else fallback to classifiers, filter against available versions

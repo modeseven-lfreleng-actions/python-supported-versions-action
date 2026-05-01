@@ -5,13 +5,25 @@
 
 # 🐍 Extract Python Versions Supported by Project
 
-Parses pyproject.toml and extracts the Python versions supported by the
-project. Determines the most recent version supported and provides JSON
-representing all supported versions, for use in GitHub matrix jobs.
+Parses Python project metadata (`pyproject.toml`, `setup.cfg`, or `setup.py`)
+and extracts the Python versions supported by the project. Determines the
+most recent version supported and provides JSON representing all supported
+versions, for use in GitHub matrix jobs.
 
 **Primary Method**: Extracts from `requires-python` constraint
 (e.g. `requires-python = ">=3.10"`)
 **Fallback Method**: Parses `Programming Language :: Python ::` classifiers
+
+**Source priority** (first match wins):
+
+1. `pyproject.toml` — `requires-python` / Poetry `python` / classifiers
+2. `setup.cfg` — `[metadata] python_requires` / classifiers
+3. `setup.py` — `python_requires=` kwarg / classifiers
+4. **EOL-aware fallback** — if no project-side constraint exists
+   anywhere, the action emits a warning and uses the EOL-aware Python
+   versions list (or its static fallback if the network is unavailable).
+   This ensures the action always succeeds with a usable matrix, even on
+   legacy projects that have not yet declared their support window.
 
 This brings alignment with actions/setup-python behavior while maintaining
 compatibility with projects that use explicit version classifiers.
@@ -43,13 +55,14 @@ of your Github workflow:
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name   | Description                                           | Required | Default |
-| --------------- | ----------------------------------------------------- | -------- | ------- |
-| path_prefix     | Directory location containing project code            | false    | '.'     |
-| network_timeout | Network timeout in seconds for API calls              | false    | '6'     |
-| max_retries     | Number of retry attempts for API calls                | false    | '2'     |
-| eol_behaviour   | How to handle EOL Python versions: warn\|strip\|fail  | false    | 'warn'  |
-| offline_mode    | Disable network lookups and use internal version list | false    | 'false' |
+| Variable Name          | Description                                                                  | Required | Default |
+| ---------------------- | ---------------------------------------------------------------------------- | -------- | ------- |
+| path_prefix            | Directory location containing project code                                   | false    | '.'     |
+| network_timeout        | Network timeout in seconds for API calls                                     | false    | '6'     |
+| max_retries            | Number of retry attempts for API calls                                       | false    | '2'     |
+| eol_behaviour          | How to handle EOL Python versions: warn\|strip\|fail                         | false    | 'warn'  |
+| offline_mode           | Disable network lookups and use internal version list                        | false    | 'false' |
+| default_python_version | Override `build_python` (X.Y) when the action falls back to the EOL list     | false    | ''      |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -123,13 +136,70 @@ Error: Python 3.8 became unsupported/EOL on date: 2024-10-07 🛑
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name      | Description                                             |
-| ------------------ | ------------------------------------------------------- |
-| build_python       | Most recent Python version supported by project         |
-| matrix_json        | All Python versions supported by project as JSON string |
-| supported_versions | Space-separated list of all supported Python versions   |
+| Variable Name      | Description                                                  |
+| ------------------ | ------------------------------------------------------------ |
+| build_python       | Most recent Python version supported by project              |
+| matrix_json        | All Python versions supported by project as JSON string      |
+| supported_versions | Space-separated list of all supported Python versions        |
+| versions_source    | Where the version data came from (see values below)          |
 
 <!-- markdownlint-enable MD013 -->
+
+### `versions_source` values
+
+<!-- markdownlint-disable MD013 MD060 -->
+
+| Value                   | Meaning                                                          |
+| ----------------------- | ---------------------------------------------------------------- |
+| `requires-python`       | Parsed from `pyproject.toml` `requires-python` (or Poetry).       |
+| `classifiers`           | Parsed from `pyproject.toml` Programming Language classifiers.    |
+| `setup-cfg-requires`    | Parsed from `setup.cfg` `[metadata] python_requires`.             |
+| `setup-cfg-classifiers` | Parsed from `setup.cfg` `[metadata] classifiers`.                 |
+| `setup-py-requires`     | Parsed from `setup.py` `python_requires=` kwarg.                  |
+| `setup-py-classifiers`  | Parsed from `setup.py` Programming Language classifiers.          |
+| `eol-fallback`          | No constraint declared anywhere; using the live EOL-aware list.   |
+| `static-fallback`       | No constraint declared anywhere and the EOL API was unavailable.  |
+
+<!-- markdownlint-enable MD013 MD060 -->
+
+Callers should treat `versions_source=eol-fallback` (or `static-fallback`)
+as a soft warning: it indicates the project hasn't declared a Python support
+window. Add `requires-python` (or `python_requires` in `setup.cfg` /
+`setup.py`) to silence the warning.
+
+## Legacy project support (`setup.cfg` / `setup.py`)
+
+The action also reads metadata from legacy projects that have not yet
+adopted `pyproject.toml`. The lookup order is:
+
+1. `pyproject.toml` — `requires-python` first, then Poetry's
+   `[tool.poetry.dependencies] python = "..."`, then classifiers.
+2. `setup.cfg` — `[metadata] python_requires = ...` (also accepts the
+   hyphenated `python-requires` variant), then `[metadata] classifiers`.
+3. `setup.py` — best-effort regex over `python_requires="..."` (single
+   or double quotes), then over Programming Language classifiers.
+
+If none of the three declare a Python version window, the action falls
+back to the EOL-aware list (or the static internal list when the
+endoflife.date API is unavailable), emits a `::warning::`, and **still
+produces a usable `build_python` and `matrix_json`** so callers do not
+have to special-case legacy projects. The `versions_source` output lets
+callers detect this case and decide policy.
+
+### Overriding `build_python` on fallback
+
+When the action falls back to the EOL-aware list, you can pin
+`build_python` to a specific X.Y version (the matrix is not affected):
+
+```yaml
+- name: "Get Python versions"
+  uses: lfreleng-actions/python-supported-versions-action@main
+  with:
+    default_python_version: '3.12'
+```
+
+This is useful for org-wide policy where every legacy project should
+build against the same baseline Python until it declares its own.
 
 ## Workflow Output Example
 
