@@ -425,12 +425,15 @@ runs:
                 return 1
             fi
 
-            # Extract Python versions from Programming Language classifiers
-            # Support both single and double quotes, ignore commented lines
+            # Extract Python versions from Programming Language classifiers.
+            # Use first-seen-wins dedup via awk rather than sort -u, which
+            # sorts lexicographically and would place '3.10' before '3.9'
+            # across the 3.9 -> 3.10 boundary. Matches the awk-based dedup
+            # in lib/constraint_utils.sh:extract_classifiers_fallback.
             classifiers=$(grep -v '^[[:space:]]*#' "$pyproject_file" 2>/dev/null | \
                           grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+' | \
                           grep -oE '[0-9]+\.[0-9]+' | \
-                          sort -u | tr '\n' ' ' | sed 's/ *$//')
+                          awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
 
             if [[ -n "$classifiers" ]]; then
                 printf '%s\n' "$classifiers"
@@ -526,10 +529,14 @@ runs:
                             ;;
                     esac
 
-                    # Update candidates to be the filtered result
+                    # Update candidates to be the filtered result.
+                    # Use awk for order-preserving dedup; sort -u would
+                    # interleave '3.10' before '3.9' lexicographically.
+                    # The final result is re-sorted numerically below;
+                    # this keeps the intermediate state consistent too.
                     if [[ -n "$temp_result" ]]; then
                         candidates=$(echo "$temp_result" | tr ' ' '\n' | grep -v '^$' | \
-                                   sort -u | tr '\n' ' ' | sed 's/ *$//')
+                                   awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
                     else
                         candidates=''
                         break  # No matches found, no point continuing
