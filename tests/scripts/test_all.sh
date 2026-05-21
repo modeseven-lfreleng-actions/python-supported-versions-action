@@ -43,6 +43,9 @@ cleanup() {
     if [ -f "$TESTS_DIR/pyproject.toml" ]; then
         rm -f "$TESTS_DIR/pyproject.toml"
     fi
+    if [ -f "$TESTS_DIR/setup.cfg" ]; then
+        rm -f "$TESTS_DIR/setup.cfg"
+    fi
     # Clean up any temporary files
     find "$TESTS_DIR" -name "*.tmp" -delete 2>/dev/null || true
 }
@@ -153,8 +156,10 @@ test_fixture_with_action() {
     # Change to test directory
     pushd "$test_dir" >/dev/null 2>&1
 
-    # Simulate the action's core logic using shared utilities
-    local ALL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13 3.14"
+    # Simulate the action's core logic using shared utilities.
+    # 3.9 is intentionally absent: it reached EOL in October 2025
+    # and is no longer part of the default supported set.
+    local ALL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
     local PYTHON_VERSIONS=""
 
     # Use shared utility to process Python constraints
@@ -261,6 +266,172 @@ PYTHON_VERSIONS=$PYTHON_VERSIONS"
     echo ""
 }
 
+# Variant of test_fixture_with_action that exercises the setup.cfg path.
+# The fixture is copied to <tmpdir>/setup.cfg (NOT pyproject.toml) so the
+# action consults the setup.cfg branch.
+test_setup_cfg_fixture() {
+    local fixture_file="$1"
+    local fixture_name
+    fixture_name=$(basename "$fixture_file" .cfg)
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+
+    local test_name
+    test_name=$(extract_metadata "$fixture_file" "TEST_NAME")
+    local should_fail
+    should_fail=$(extract_metadata "$fixture_file" "SHOULD_FAIL")
+    local description
+    description=$(extract_metadata "$fixture_file" "DESCRIPTION")
+
+    if [ -z "$test_name" ]; then
+        test_name="$fixture_name"
+    fi
+
+    log_test_start "$test_name"
+    if [ -n "$description" ]; then
+        echo "   Description: $description"
+    fi
+
+    local test_dir
+    test_dir=$(mktemp -d)
+    cp "$fixture_file" "$test_dir/setup.cfg"
+
+    local result=""
+    local exit_code=0
+
+    pushd "$test_dir" >/dev/null 2>&1
+
+    local ALL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
+    local PYTHON_VERSIONS=""
+
+    if PYTHON_VERSIONS=$(process_python_constraints_setup_cfg "setup.cfg" \
+                         "$ALL_SUPPORTED_VERSIONS"); then
+        local BUILD_PYTHON MATRIX_JSON
+        BUILD_PYTHON=$(get_build_version "$PYTHON_VERSIONS")
+        MATRIX_JSON=$(generate_matrix_json "$PYTHON_VERSIONS")
+        result="STATUS=SUCCESS
+BUILD_PYTHON=$BUILD_PYTHON
+MATRIX_JSON=$MATRIX_JSON
+PYTHON_VERSIONS=$PYTHON_VERSIONS"
+        exit_code=0
+    else
+        exit_code=1
+        result="No Python versions found"
+    fi
+
+    popd >/dev/null 2>&1
+    rm -rf "$test_dir"
+
+    local test_passed=true
+    if [ "$should_fail" = "true" ]; then
+        if [ $exit_code -eq 0 ]; then
+            log_error "$test_name - Expected test to fail but it succeeded"
+            test_passed=false
+        else
+            log_success "$test_name - Correctly failed as expected"
+        fi
+    else
+        if [ $exit_code -ne 0 ]; then
+            log_error "$test_name - Expected test to succeed but it failed: $result"
+            test_passed=false
+        else
+            local build_python python_versions
+            build_python=$(echo "$result" | grep "^BUILD_PYTHON=" | cut -d'=' -f2-)
+            python_versions=$(echo "$result" | grep "^PYTHON_VERSIONS=" | cut -d'=' -f2-)
+            log_success "$test_name"
+            echo "   Build Python: $build_python"
+            echo "   All versions: $python_versions"
+
+            local expected_exact expected_min expected_count
+            expected_exact=$(extract_metadata "$fixture_file" "EXPECTED_EXACT_VERSION")
+            expected_min=$(extract_metadata "$fixture_file" "EXPECTED_MIN_VERSION")
+            expected_count=$(extract_metadata "$fixture_file" "EXPECTED_VERSIONS_COUNT")
+
+            if [ -n "$expected_exact" ]; then
+                if ! assert_equal "Exact version" "$expected_exact" "$python_versions"; then
+                    test_passed=false
+                fi
+                if ! assert_equal "Build version" "$expected_exact" "$build_python"; then
+                    test_passed=false
+                fi
+            fi
+            if [ -n "$expected_min" ]; then
+                local actual_min
+                actual_min=$(first_version "$python_versions")
+                if ! assert_equal "Minimum version" "$expected_min" "$actual_min"; then
+                    test_passed=false
+                fi
+            fi
+            if [ -n "$expected_count" ]; then
+                local actual_count
+                actual_count=$(count_versions "$python_versions")
+                if ! assert_equal "Versions count" "$expected_count" "$actual_count"; then
+                    test_passed=false
+                fi
+            fi
+        fi
+    fi
+
+    if [ "$test_passed" = true ]; then
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+    else
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    fi
+    echo ""
+}
+
+# Detect the metadata source precedence using the shared helper.
+test_metadata_source_precedence() {
+    log_section "Metadata Source Precedence"
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+    log_test_start "detect_metadata_source: pyproject takes precedence"
+
+    local d
+    d=$(mktemp -d)
+    printf '[project]\nname = "x"\nrequires-python = ">=3.11"\n' > "$d/pyproject.toml"
+    printf '[metadata]\nname = x\n' > "$d/setup.cfg"
+    local source_path source_tag
+    source_path=$(detect_metadata_source "$d" 2> /tmp/_src_tag) || true
+    source_tag=$(cat /tmp/_src_tag)
+    if [ "$(basename "$source_path")" = "pyproject.toml" ] && [ "$source_tag" = "pyproject" ]; then
+        log_success "pyproject.toml wins when both files exist"
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+    else
+        log_error "Expected pyproject.toml precedence; got path='$source_path' tag='$source_tag'"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    fi
+    rm -rf "$d" /tmp/_src_tag
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+    log_test_start "detect_metadata_source: setup.cfg used when pyproject absent"
+    d=$(mktemp -d)
+    printf '[metadata]\nname = x\n' > "$d/setup.cfg"
+    source_path=$(detect_metadata_source "$d" 2> /tmp/_src_tag) || true
+    source_tag=$(cat /tmp/_src_tag)
+    if [ "$(basename "$source_path")" = "setup.cfg" ] && [ "$source_tag" = "setup.cfg" ]; then
+        log_success "setup.cfg used when pyproject.toml absent"
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+    else
+        log_error "Expected setup.cfg detection; got path='$source_path' tag='$source_tag'"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    fi
+    rm -rf "$d" /tmp/_src_tag
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+    log_test_start "detect_metadata_source: error when neither file exists"
+    d=$(mktemp -d)
+    if detect_metadata_source "$d" 2>/dev/null; then
+        log_error "Expected non-zero when neither file exists"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    else
+        log_success "Correctly returned non-zero when neither file exists"
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+    fi
+    rm -rf "$d"
+    echo ""
+}
+
 # Function to test EOL awareness
 test_eol_awareness() {
     log_section "EOL Awareness Tests"
@@ -268,26 +439,34 @@ test_eol_awareness() {
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     log_test_start "EOL Version Filtering"
 
-    # Test that our static version list excludes EOL versions
-    local supported_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    # Test that our static version list excludes EOL versions.
+    # 3.9 reached EOL in October 2025 and 3.8 in October 2024; both
+    # should be absent from the static list.
+    local supported_versions
+    supported_versions=$(get_static_python_versions)
 
     echo "   Test versions: $supported_versions"
 
-    # Check that Python 3.8 is not included (EOL October 7, 2024)
-    if echo "$supported_versions" | grep -q "3.8"; then
-        log_error "Python 3.8 should be EOL but was included in test versions"
+    if echo "$supported_versions" | grep -qE '(^| )3\.8( |$)'; then
+        log_error "Python 3.8 should be EOL but was included in static versions"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        return
+    fi
+    if echo "$supported_versions" | grep -qE '(^| )3\.9( |$)'; then
+        log_error "Python 3.9 should be EOL but was included in static versions"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         return
     fi
 
-    # Check that we have reasonable versions (3.9+)
-    if ! echo "$supported_versions" | grep -q "3.9"; then
-        log_error "Expected to find Python 3.9 in supported versions"
+    # Sanity-check: 3.10 must be present (oldest non-EOL minor at the
+    # time of writing). Update when 3.10 itself reaches EOL.
+    if ! echo "$supported_versions" | grep -qE '(^| )3\.10( |$)'; then
+        log_error "Expected to find Python 3.10 in supported versions"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         return
     fi
 
-    log_success "EOL Version Filtering - Python 3.8 correctly excluded"
+    log_success "EOL Version Filtering - Python 3.8 and 3.9 correctly excluded"
     PASSED_TESTS=$((PASSED_TESTS + 1))
     echo ""
 }
@@ -299,10 +478,10 @@ test_network_fallback() {
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     log_test_start "Static Fallback Mechanism"
 
-    # Verify static fallback works
-    local static_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    local static_versions
+    static_versions=$(get_static_python_versions)
 
-    if [ -n "$static_versions" ] && echo "$static_versions" | grep -q "3.9"; then
+    if [ -n "$static_versions" ] && echo "$static_versions" | grep -qE '(^| )3\.10( |$)'; then
         log_success "Static Fallback - Versions available when network unavailable"
         echo "   Static versions: $static_versions"
         PASSED_TESTS=$((PASSED_TESTS + 1))
@@ -346,21 +525,21 @@ test_eol_api_logic() {
             return
         fi
 
-        # Check for minimum expected versions (3.9+)
-        if echo "$versions" | grep -q "3.9" && echo "$versions" | grep -q "3.1[0-9]"; then
-            log_success "Found expected minimum versions (3.9+)"
+        # Check for minimum expected versions (3.10+; 3.9 is now EOL)
+        if echo "$versions" | grep -qE '(^| )3\.10( |$)'; then
+            log_success "Found expected minimum version (3.10)"
         else
             log_warning "Expected versions not found"
-            echo "   Expected to find 3.9 and 3.1x versions"
+            echo "   Expected to find 3.10 in returned versions"
         fi
 
-        # Check that EOL versions are excluded (Python 3.8)
-        if echo "$versions" | grep -q "3.8"; then
-            log_error "Python 3.8 should be EOL but was included"
+        # Check that EOL versions are excluded (Python 3.8 and 3.9)
+        if echo "$versions" | grep -qE '(^| )3\.[89]( |$)'; then
+            log_error "EOL Python (3.8/3.9) should not be in API result"
             FAILED_TESTS=$((FAILED_TESTS + 1))
             return
         else
-            log_success "Python 3.8 correctly excluded (EOL)"
+            log_success "EOL Python versions correctly excluded"
         fi
 
         PASSED_TESTS=$((PASSED_TESTS + 1))
@@ -432,19 +611,34 @@ main() {
 
     local fixture_count
     fixture_count=$(find "$FIXTURES_DIR" -name "*.toml" 2>/dev/null | wc -l)
-    log_info "Found $fixture_count test fixtures"
+    local cfg_fixture_count
+    cfg_fixture_count=$(find "$FIXTURES_DIR" -name "*.cfg" 2>/dev/null | wc -l)
+    log_info "Found $fixture_count pyproject.toml test fixtures"
+    log_info "Found $cfg_fixture_count setup.cfg test fixtures"
 
     # Run unit tests first
     run_unit_tests
 
     # Test fixture files
-    log_section "Fixture-Based Tests"
+    log_section "pyproject.toml Fixture-Based Tests"
 
     for fixture_file in "$FIXTURES_DIR"/*.toml; do
         if [ -f "$fixture_file" ]; then
             test_fixture_with_action "$fixture_file"
         fi
     done
+
+    # Test setup.cfg fixtures (new path: legacy setuptools / PBR projects)
+    log_section "setup.cfg Fixture-Based Tests"
+
+    for fixture_file in "$FIXTURES_DIR"/*.cfg; do
+        if [ -f "$fixture_file" ]; then
+            test_setup_cfg_fixture "$fixture_file"
+        fi
+    done
+
+    # Test metadata source precedence detection
+    test_metadata_source_precedence
 
     # Test EOL awareness
     test_eol_awareness
@@ -473,6 +667,9 @@ main() {
         echo "   • Exact version constraints ✅"
         echo "   • Classifiers-only scenarios ✅"
         echo "   • Mixed version scenarios ✅"
+        echo "   • setup.cfg python_requires extraction ✅"
+        echo "   • setup.cfg classifiers (modern + PBR legacy) ✅"
+        echo "   • Metadata source precedence (pyproject > setup.cfg) ✅"
         echo "   • Error handling and edge cases ✅"
         echo "   • EOL-aware version filtering ✅"
         echo "   • Network fallback mechanisms ✅"

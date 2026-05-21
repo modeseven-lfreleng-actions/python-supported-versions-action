@@ -48,6 +48,13 @@ outputs:
   supported_versions:
     description: "Space-separated list of all supported Python versions"
     value: "${{ steps.versions.outputs.supported_versions }}"
+  metadata_source:
+    description: >-
+      Project metadata file used to derive the Python version set:
+      'pyproject.toml' or 'setup.cfg'. Useful for downstream actions
+      that need to know whether legacy setuptools metadata was the
+      source of truth.
+    value: "${{ steps.versions.outputs.metadata_source }}"
 
 runs:
   using: "composite"
@@ -72,16 +79,26 @@ runs:
         OFFLINE_MODE="${INPUT_OFFLINE_MODE}"
 
 
-        # Internal list of supported Python versions (requires periodic update)
-        INTERNAL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13 3.14"
+        # Internal list of supported Python versions (requires periodic update).
+        # Python 3.9 reached end-of-life in October 2025 and is no longer
+        # included in the static fallback; remove or extend this list when
+        # the upstream Python release cadence changes.
+        INTERNAL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
 
         # Setup and validate environment
         path_prefix="${INPUT_PATH_PREFIX}"
         path_prefix="${path_prefix:-'.'}"
         path_prefix="${path_prefix%/}"
 
-        # Set PYPROJECT_FILE after path normalization
+        # Candidate project-metadata files. The action accepts either of
+        # the two declarative formats:
+        #   * pyproject.toml — PEP 517/518/621 (preferred; canonical)
+        #   * setup.cfg     — Legacy declarative setuptools / PBR
+        # Precedence is pyproject.toml first; setup.cfg is consulted only
+        # when pyproject.toml is absent OR present but devoid of usable
+        # Python version metadata.
         PYPROJECT_FILE="${path_prefix}/pyproject.toml"
+        SETUP_CFG_FILE="${path_prefix}/setup.cfg"
 
         # Check tool availability
         if ! command -v jq >/dev/null 2>&1; then
@@ -97,14 +114,16 @@ runs:
         fi
 
 
-        # Validate directory and pyproject.toml existence
+        # Validate directory and metadata file existence. Either
+        # pyproject.toml or setup.cfg is sufficient; the action only
+        # fails when neither candidate exists.
         if [[ ! -d "$path_prefix" ]]; then
           echo 'Error: invalid path/prefix to project directory ❌'
           exit 1
         fi
 
-        if [[ ! -f "$path_prefix/pyproject.toml" ]]; then
-          echo 'Error: missing pyproject.toml file ❌'
+        if [[ ! -f "$PYPROJECT_FILE" && ! -f "$SETUP_CFG_FILE" ]]; then
+          echo "Error: neither pyproject.toml nor setup.cfg found in $path_prefix ❌"
           exit 1
         fi
 
@@ -402,12 +421,15 @@ runs:
                 return 1
             fi
 
-            # Extract Python versions from Programming Language classifiers
-            # Support both single and double quotes, ignore commented lines
+            # Extract Python versions from Programming Language classifiers.
+            # Preserves source order via awk dedup (first-seen wins) instead
+            # of `sort -u`, which would sort lexicographically and place
+            # '3.10' before '3.9' — a real problem once the matrix spans
+            # the 3.9 -> 3.10 boundary.
             classifiers=$(grep -v '^[[:space:]]*#' "$pyproject_file" 2>/dev/null | \
                           grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+' | \
                           grep -oE '[0-9]+\.[0-9]+' | \
-                          sort -u | tr '\n' ' ' | sed 's/ *$//')
+                          awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ *$//')
 
             if [[ -n "$classifiers" ]]; then
                 printf '%s\n' "$classifiers"
@@ -415,6 +437,125 @@ runs:
             else
                 return 1
             fi
+        }
+
+        # Function: Extract python_requires from setup.cfg via configparser.
+        # Falls back to awk-based extraction when python3 is unavailable
+        # (vanishingly rare on GitHub-hosted runners, but supported for
+        # bring-your-own-runner setups).
+        extract_requires_python_setup_cfg() {
+            local cfg_file="$1"
+            [[ -f "$cfg_file" ]] || return 1
+
+            if command -v python3 >/dev/null 2>&1; then
+                local val
+                val=$(python3 - "$cfg_file" <<'PY' 2>/dev/null
+        import configparser, sys
+        cfg = configparser.ConfigParser()
+        try:
+            cfg.read(sys.argv[1])
+        except configparser.Error:
+            sys.exit(1)
+        val = cfg.get("options", "python_requires", fallback=None)
+        if val is None:
+            sys.exit(1)
+        val = val.strip().strip("'\"")
+        if not val:
+            sys.exit(1)
+        print(val)
+        PY
+                ) || val=""
+                if [[ -n "$val" ]]; then
+                    printf '%s\n' "$val"
+                    return 0
+                fi
+            fi
+
+            # Fallback: awk-based extraction limited to the canonical key
+            # name and single-line values — sufficient for the vast
+            # majority of real-world setup.cfg files.
+            local constraint
+            constraint=$(awk '
+              BEGIN { insec = 0 }
+              /^[[:space:]]*[#;]/ { next }
+              /^\[/ {
+                insec = ($0 ~ /^\[options\][[:space:]]*$/) ? 1 : 0
+                next
+              }
+              insec && /^[[:space:]]*python_requires[[:space:]]*=/ {
+                sub(/^[[:space:]]*python_requires[[:space:]]*=[[:space:]]*/, "")
+                sub(/[[:space:]]*$/, "")
+                gsub(/^["\x27]|["\x27]$/, "")
+                print
+                exit
+              }
+            ' "$cfg_file" 2>/dev/null)
+
+            if [[ -n "$constraint" ]]; then
+                printf '%s\n' "$constraint"
+                return 0
+            fi
+            return 1
+        }
+
+        # Function: Extract Programming Language classifiers from setup.cfg.
+        # Handles both the modern setuptools key ('classifiers', plural)
+        # and the legacy PBR/distutils key ('classifier', singular) under
+        # [metadata]. Either or both may be present; merge the results.
+        extract_classifiers_setup_cfg() {
+            local cfg_file="$1"
+            [[ -f "$cfg_file" ]] || return 1
+
+            if command -v python3 >/dev/null 2>&1; then
+                local versions
+                versions=$(python3 - "$cfg_file" <<'PY' 2>/dev/null
+        import configparser, re, sys
+        cfg = configparser.ConfigParser()
+        try:
+            cfg.read(sys.argv[1])
+        except configparser.Error:
+            sys.exit(1)
+        raw = []
+        for key in ("classifiers", "classifier"):
+            val = cfg.get("metadata", key, fallback=None)
+            if val:
+                raw.append(val)
+        if not raw:
+            sys.exit(1)
+        seen = []
+        for block in raw:
+            for line in block.splitlines():
+                m = re.search(r"Programming Language :: Python :: (\d+\.\d+)(?![.\d])", line)
+                if m and m.group(1) not in seen:
+                    seen.append(m.group(1))
+        if not seen:
+            sys.exit(1)
+        print(" ".join(seen))
+        PY
+                ) || versions=""
+                if [[ -n "$versions" ]]; then
+                    printf '%s\n' "$versions"
+                    return 0
+                fi
+            fi
+
+            # Fallback: grep over the raw file. Continuation lines for
+            # classifier values in setup.cfg are indented, so the regex
+            # catches them irrespective of section structure.
+            local lines versions
+            lines=$(grep -v '^[[:space:]]*[#;]' "$cfg_file" 2>/dev/null | \
+                    grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+') || true
+            if [[ -z "$lines" ]]; then
+                return 1
+            fi
+            versions=$(echo "$lines" | grep -oE 'Python :: [0-9]+\.[0-9]+' | \
+                       grep -oE '[0-9]+\.[0-9]+' | awk '!seen[$0]++' | \
+                       tr '\n' ' ' | sed 's/ $//')
+            if [[ -n "$versions" ]]; then
+                printf '%s\n' "$versions"
+                return 0
+            fi
+            return 1
         }
 
         # Function: Parse version constraint and return all matching versions
@@ -737,32 +878,73 @@ runs:
         fi
         echo "Supported versions: $SUPPORTED_VERSIONS"
 
-        # Extract requires-python constraint
+        # Extract requires-python constraint and Python classifiers.
+        #
+        # Source precedence:
+        #   1. pyproject.toml  — PEP 621 'requires-python' and
+        #                       project.classifiers (or Poetry deps).
+        #   2. setup.cfg       — [options] python_requires and
+        #                       [metadata] classifiers / classifier.
+        #
+        # When both files exist we consult pyproject.toml first and only
+        # consult setup.cfg if pyproject.toml yielded nothing usable.
+        # METADATA_SOURCE is emitted as a workflow output so downstream
+        # actions (e.g. python-build-action) can react to the project's
+        # canonical metadata format.
         REQUIRES_PYTHON=""
-        if command -v python3 >/dev/null 2>&1; then
-            if REQUIRES_PYTHON=$(extract_requires_python_python "$PYPROJECT_FILE"); then
-              echo "Found requires-python constraint (via Python): $REQUIRES_PYTHON"
-            fi
-        fi
-
-        # Fall back to grep/sed parsing if Python parsing failed
-        if [[ -z "$REQUIRES_PYTHON" ]]; then
-            if REQUIRES_PYTHON=$(extract_requires_python_fallback "$PYPROJECT_FILE"); then
-              echo "Found requires-python constraint (via fallback): $REQUIRES_PYTHON"
-            fi
-        fi
-
-        # Extract classifiers fallback
         CLASSIFIERS=""
-        if CLASSIFIERS=$(extract_classifiers_fallback "$PYPROJECT_FILE"); then
-          echo "Programming Language classifiers: $CLASSIFIERS"
+        METADATA_SOURCE=""
+
+        # --- Phase 1: pyproject.toml ---------------------------------------
+        if [[ -f "$PYPROJECT_FILE" ]]; then
+            if command -v python3 >/dev/null 2>&1; then
+                if REQUIRES_PYTHON=$(extract_requires_python_python "$PYPROJECT_FILE"); then
+                  echo "Found requires-python constraint (via Python): $REQUIRES_PYTHON"
+                fi
+            fi
+
+            if [[ -z "$REQUIRES_PYTHON" ]]; then
+                if REQUIRES_PYTHON=$(extract_requires_python_fallback "$PYPROJECT_FILE"); then
+                  echo "Found requires-python constraint (via fallback): $REQUIRES_PYTHON"
+                fi
+            fi
+
+            if CLASSIFIERS=$(extract_classifiers_fallback "$PYPROJECT_FILE"); then
+              echo "Programming Language classifiers (pyproject.toml): $CLASSIFIERS"
+            fi
+
+            if [[ -n "$REQUIRES_PYTHON" || -n "$CLASSIFIERS" ]]; then
+                METADATA_SOURCE="pyproject.toml"
+            fi
+        fi
+
+        # --- Phase 2: setup.cfg (only if phase 1 produced nothing) ---------
+        if [[ -z "$METADATA_SOURCE" && -f "$SETUP_CFG_FILE" ]]; then
+            echo "ℹ️  pyproject.toml absent or empty of Python version metadata; consulting setup.cfg"
+            if REQUIRES_PYTHON=$(extract_requires_python_setup_cfg "$SETUP_CFG_FILE"); then
+              echo "Found python_requires constraint (setup.cfg): $REQUIRES_PYTHON"
+            fi
+            if CLASSIFIERS=$(extract_classifiers_setup_cfg "$SETUP_CFG_FILE"); then
+              echo "Programming Language classifiers (setup.cfg): $CLASSIFIERS"
+            fi
+            if [[ -n "$REQUIRES_PYTHON" || -n "$CLASSIFIERS" ]]; then
+                METADATA_SOURCE="setup.cfg"
+            fi
         fi
 
         # Check if any constraints were found
         if [[ -z "$REQUIRES_PYTHON" && -z "$CLASSIFIERS" ]]; then
-          echo "Error: No Python version constraints found in $PYPROJECT_FILE ❌"
+          if [[ -f "$PYPROJECT_FILE" && -f "$SETUP_CFG_FILE" ]]; then
+            echo "Error: no Python version constraints found in $PYPROJECT_FILE or $SETUP_CFG_FILE ❌"
+          elif [[ -f "$PYPROJECT_FILE" ]]; then
+            echo "Error: no Python version constraints found in $PYPROJECT_FILE ❌"
+          else
+            echo "Error: no Python version constraints found in $SETUP_CFG_FILE ❌"
+          fi
           exit 1
         fi
+
+        echo "Metadata source: $METADATA_SOURCE"
 
         # Process constraints and determine requested versions
         REQUESTED_PYTHON_VERSIONS=""
@@ -832,6 +1014,7 @@ runs:
           echo "__PY_MATRIX_JSON__"
         } >> "$GITHUB_OUTPUT"
         echo "supported_versions=$FINAL_PYTHON_VERSIONS" >> "$GITHUB_OUTPUT"
+        echo "metadata_source=$METADATA_SOURCE" >> "$GITHUB_OUTPUT"
 
         # Final clean output
         echo "✅ Build Python: $BUILD_PYTHON"

@@ -203,6 +203,135 @@ parse_version_constraint() {
   return 0
 }
 
+# Extract requires-python constraint from a setup.cfg file.
+# Returns 0 with the constraint on stdout, or 1 if absent / file missing.
+#
+# Looks at [options] python_requires = <constraint>. The PEP 517/518
+# declarative setuptools format does not quote the value, so we do not
+# strip quotes here (configparser-level helper below handles both).
+extract_requires_python_setup_cfg() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+
+  # Prefer Python's configparser if Python 3 is available — INI parsing
+  # rules (continuation lines, comment markers, case-insensitive keys)
+  # are non-trivial and easy to get wrong with grep/sed.
+  if command -v python3 >/dev/null 2>&1; then
+    local val
+    val=$(python3 - "$file" <<'PY' 2>/dev/null
+import configparser, sys
+cfg = configparser.ConfigParser()
+try:
+    cfg.read(sys.argv[1])
+except configparser.Error:
+    sys.exit(1)
+val = cfg.get("options", "python_requires", fallback=None)
+if val is None:
+    sys.exit(1)
+val = val.strip().strip("'\"")
+if not val:
+    sys.exit(1)
+print(val)
+PY
+) || val=""
+    if [[ -n "$val" ]]; then
+      echo "$val"
+      return 0
+    fi
+  fi
+
+  # Fallback: awk-based extraction. Limited to single-line values and
+  # the canonical key name; sufficient for the overwhelming majority
+  # of real-world setup.cfg files.
+  local constraint
+  constraint=$(awk '
+    BEGIN { insec = 0 }
+    /^[[:space:]]*[#;]/ { next }
+    /^\[/ {
+      insec = ($0 ~ /^\[options\][[:space:]]*$/) ? 1 : 0
+      next
+    }
+    insec && /^[[:space:]]*python_requires[[:space:]]*=/ {
+      sub(/^[[:space:]]*python_requires[[:space:]]*=[[:space:]]*/, "")
+      sub(/[[:space:]]*$/, "")
+      gsub(/^["\x27]|["\x27]$/, "")
+      print
+      exit
+    }
+  ' "$file" 2>/dev/null)
+
+  if [[ -n "$constraint" ]]; then
+    echo "$constraint"
+    return 0
+  fi
+  return 1
+}
+
+# Extract Python versions from Programming Language classifiers in setup.cfg.
+# Supports both the modern setuptools key (`classifiers`) and the legacy
+# PBR/distutils key (`classifier`) under [metadata]. Classifier values in
+# setup.cfg are typically multi-line indented blocks.
+# Prints space-separated versions in first-seen order; returns 0 on success.
+extract_classifiers_setup_cfg() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+
+  if command -v python3 >/dev/null 2>&1; then
+    local versions
+    versions=$(python3 - "$file" <<'PY' 2>/dev/null
+import configparser, re, sys
+cfg = configparser.ConfigParser()
+try:
+    cfg.read(sys.argv[1])
+except configparser.Error:
+    sys.exit(1)
+# Modern setuptools uses 'classifiers'; PBR and legacy distutils use
+# the singular 'classifier'. Some files include both; merge them.
+raw = []
+for key in ("classifiers", "classifier"):
+    val = cfg.get("metadata", key, fallback=None)
+    if val:
+        raw.append(val)
+if not raw:
+    sys.exit(1)
+seen = []
+for block in raw:
+    for line in block.splitlines():
+        m = re.search(r"Programming Language :: Python :: (\d+\.\d+)(?![.\d])", line)
+        if m and m.group(1) not in seen:
+            seen.append(m.group(1))
+if not seen:
+    sys.exit(1)
+print(" ".join(seen))
+PY
+) || versions=""
+    if [[ -n "$versions" ]]; then
+      echo "$versions"
+      return 0
+    fi
+  fi
+
+  # Fallback: a simpler grep over the raw file. Continuation lines for
+  # classifier values in setup.cfg start with whitespace, so grepping
+  # for the well-known classifier pattern catches them regardless of
+  # section structure. This is intentionally permissive — the Python
+  # path above is preferred.
+  local lines versions
+  lines=$(grep -v '^[[:space:]]*[#;]' "$file" 2>/dev/null | \
+          grep -E 'Programming Language :: Python :: [0-9]+\.[0-9]+') || true
+  if [[ -z "$lines" ]]; then
+    return 1
+  fi
+  versions=$(echo "$lines" | grep -oE 'Python :: [0-9]+\.[0-9]+' | \
+             grep -oE '[0-9]+\.[0-9]+' | awk '!seen[$0]++' | \
+             tr '\n' ' ' | sed 's/ $//')
+  if [[ -n "$versions" ]]; then
+    echo "$versions"
+    return 0
+  fi
+  return 1
+}
+
 # Extract requires-python constraint from a TOML file (best-effort, grep-based)
 # Prints the constraint and returns 0 on success; returns 1 on failure/not found.
 extract_requires_python_constraint() {
@@ -351,5 +480,70 @@ process_python_constraints() {
     fi
   fi
 
+  return 1
+}
+
+# High-level function for setup.cfg sources. Mirrors process_python_constraints
+# but reads python_requires from [options] and classifiers from [metadata].
+# Returns 0 printing space-separated versions, or 1 if none determinable.
+process_python_constraints_setup_cfg() {
+  local file="$1"
+  local available="$2"
+
+  [[ -f "$file" ]] || return 1
+  [[ -n "$available" ]] || return 1
+
+  local constraint versions classifiers out=""
+  if constraint=$(extract_requires_python_setup_cfg "$file"); then
+    if versions=$(parse_version_constraint "$constraint" "$available"); then
+      echo "$versions"
+      return 0
+    fi
+  fi
+
+  if classifiers=$(extract_classifiers_setup_cfg "$file"); then
+    local v a
+    for v in $classifiers; do
+      for a in $available; do
+        if [[ "$v" == "$a" ]]; then
+          out="$out $v"
+          break
+        fi
+      done
+    done
+    out=$(echo "$out" | _trim)
+    if [[ -n "$out" ]]; then
+      sort_versions "$out"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Determine which metadata file to use for extraction.
+# Precedence:
+#   1. pyproject.toml — if it yields a usable result
+#   2. setup.cfg — fallback for legacy setuptools/PBR projects
+# Prints the absolute or relative path on stdout (caller uses it) and
+# echoes a short tag on file descriptor 3 (or stderr if 3 is closed)
+# indicating which source was selected: 'pyproject', 'setup.cfg', or
+# 'none'. Returns 0 if at least one of the candidate files exists, or
+# 1 if neither is present.
+detect_metadata_source() {
+  local path_prefix="$1"
+  local py="${path_prefix%/}/pyproject.toml"
+  local cfg="${path_prefix%/}/setup.cfg"
+  if [[ -f "$py" ]]; then
+    echo "$py"
+    printf 'pyproject\n' 1>&2
+    return 0
+  fi
+  if [[ -f "$cfg" ]]; then
+    echo "$cfg"
+    printf 'setup.cfg\n' 1>&2
+    return 0
+  fi
+  printf 'none\n' 1>&2
   return 1
 }

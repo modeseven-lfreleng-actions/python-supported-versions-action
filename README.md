@@ -5,23 +5,36 @@
 
 # 🐍 Extract Python Versions Supported by Project
 
-Parses pyproject.toml and extracts the Python versions supported by the
-project. Determines the most recent version supported and provides JSON
-representing all supported versions, for use in GitHub matrix jobs.
+Parses a project's declarative metadata and extracts the Python versions
+supported by it. Determines the most recent version supported and provides
+JSON representing all supported versions, for use in GitHub matrix jobs.
 
-**Primary Method**: Extracts from `requires-python` constraint
-(e.g. `requires-python = ">=3.10"`)
-**Fallback Method**: Parses `Programming Language :: Python ::` classifiers
+**Metadata sources** (consulted in order, first hit wins):
+
+1. `pyproject.toml` (PEP 517/518/621) — the canonical modern format.
+2. `setup.cfg` (legacy declarative setuptools / PBR) — the fallback for
+   older projects that have not migrated to PEP 621.
+
+**Within each source**, the action prefers an explicit version constraint
+before falling back to classifier-derived versions:
+
+- **Primary method**: `requires-python` (pyproject.toml) or
+  `python_requires` under `[options]` (setup.cfg), e.g.
+  `requires-python = ">=3.10"`.
+- **Fallback method**: `Programming Language :: Python :: X.Y` Trove
+  classifiers. The action recognises both `classifiers` and the legacy
+  PBR `classifier` key in setup.cfg.
 
 This brings alignment with actions/setup-python behavior while maintaining
-compatibility with projects that use explicit version classifiers.
+compatibility with projects that use explicit version classifiers and with
+legacy setuptools/PBR projects that have not yet adopted pyproject.toml.
 
 **Dynamic Version Detection with EOL Awareness**: The action automatically
 fetches the latest supported Python versions from official sources, filtering
 out end-of-life (EOL) versions to ensure projects use supported Python versions.
 This provides up-to-date, secure version information without manual updates.
 If the network call fails, the action will continue with a warning and rely
-solely on the constraints found in pyproject.toml.
+solely on the constraints found in your project metadata.
 
 ## python-supported-versions-action
 
@@ -128,6 +141,7 @@ Error: Python 3.8 became unsupported/EOL on date: 2024-10-07 🛑
 | build_python       | Most recent Python version supported by project         |
 | matrix_json        | All Python versions supported by project as JSON string |
 | supported_versions | Space-separated list of all supported Python versions   |
+| metadata_source    | `pyproject.toml` or `setup.cfg` (source file consulted) |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -155,14 +169,47 @@ A workflow calling this action will produce the output below:
 
 ```console
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
-Found requires-python constraint (via fallback): >=3.10
-🔍 Processed requires-python constraint
+Supported versions: 3.10 3.11 3.12 3.13 3.14
+Found requires-python constraint (via Python): >=3.10
+Metadata source: pyproject.toml
 Python versions from constraints: 3.10 3.11 3.12 3.13 3.14
 ✅ Build Python: 3.14
 ✅ Supported versions: 3.10 3.11 3.12 3.13 3.14
 ✅ Matrix JSON: {"python-version":["3.10","3.11","3.12","3.13","3.14"]}
 ```
+
+## Legacy setuptools / PBR (`setup.cfg`) Support
+
+Projects that pre-date PEP 621 — in particular OpenStack / PBR projects —
+often carry their declarative metadata in `setup.cfg` rather than
+`pyproject.toml`. The action handles both layouts transparently.
+
+The primary source is `python_requires` under `[options]`:
+
+```ini
+[options]
+python_requires = >=3.10
+```
+
+When `python_requires` is absent the action falls back to Trove classifiers
+under `[metadata]`. The action recognises both the modern `classifiers` key
+and the legacy PBR `classifier` (singular) key, and combines entries from
+both keys in first-seen order:
+
+```ini
+[metadata]
+name = lfdocs_conf
+classifier =
+    Programming Language :: Python :: 3.10
+    Programming Language :: Python :: 3.11
+    Programming Language :: Python :: 3.12
+```
+
+When both `pyproject.toml` and `setup.cfg` exist in the same directory the
+action consults `pyproject.toml` first, then falls back to `setup.cfg`
+whenever `pyproject.toml` is absent **or** contains no Python version
+metadata. The `metadata_source` output reports which file supplied the
+answer, allowing downstream actions to react accordingly.
 
 ## Implementation Details
 
@@ -172,9 +219,9 @@ The action first attempts to extract the `requires-python` constraint from
 pyproject.toml:
 
 ```toml
-requires-python = ">=3.10"    # Supports 3.10, 3.11, 3.12, 3.13, 3.14
-requires-python = ">3.9"      # Supports 3.10, 3.11, 3.12, 3.13, 3.14
-requires-python = "==3.11"    # Supports 3.11 specifically
+requires-python = ">=3.10"   # Supports 3.10, 3.11, 3.12, 3.13, 3.14
+requires-python = ">3.10"    # Supports 3.11, 3.12, 3.13, 3.14
+requires-python = "==3.11"   # Supports 3.11 specifically
 ```
 
 The action evaluates the constraint against supported Python versions
@@ -204,7 +251,7 @@ from `tool.poetry.dependencies.python`:
 [tool.poetry.dependencies]
 python = "^3.10"     # Caret constraint: >=3.10,<4.0
 python = "~=3.11"    # Compatible release: >=3.11,<3.12
-python = ">=3.9,<3.13"  # Range constraint
+python = ">=3.10,<3.13"  # Range constraint
 ```
 
 Poetry constraints are automatically normalized to standard PEP 440 format
@@ -238,12 +285,25 @@ self-contained, portable solution that doesn't require external dependencies.
 - `fetch_python_data()` - Fetches Python version data from endoflife.date API
 - `check_version_eol()` - Checks if a Python version is end-of-life
 - `normalize_constraint()` - Handles Poetry caret (^) and tilde (~=) constraints
-- `extract_requires_python_constraint()` - Extracts requires-python from pyproject.toml
-- `extract_classifiers_fallback()` - Extracts Python versions from classifiers
+- `extract_requires_python_python()` / `extract_requires_python_fallback()` -
+  Extract `requires-python` from `pyproject.toml` (Python TOML parser primary,
+  grep/sed fallback)
+- `extract_classifiers_fallback()` - Extracts Python versions from
+  `pyproject.toml` classifiers (order-preserving dedup)
+- `extract_requires_python_setup_cfg()` - Extract `python_requires` from
+  `setup.cfg` (`configparser` primary, awk fallback)
+- `extract_classifiers_setup_cfg()` - Extracts Python versions from `setup.cfg`
+  `[metadata].classifiers` (modern) or `[metadata].classifier` (legacy PBR)
 - `parse_version_constraint()` - Parses and applies version constraints
 - `handle_eol_versions()` - Processes EOL versions based on eol_behaviour setting
 - `generate_matrix_json()` - Creates GitHub Actions matrix JSON
 - `get_build_version()` - Determines latest version for builds
+
+A mirror implementation of the extractor helpers lives under `lib/` and
+backs the test suite. Keep both copies in sync; the test job
+`test-comprehensive` covers the lib path while the `test-setup-cfg-fixtures`
+and `test-metadata-source-precedence` jobs exercise the live `action.yaml`
+implementation end-to-end.
 
 **Design Benefits:**
 
@@ -265,14 +325,13 @@ actively maintained Python versions remain available.
 
 1. Fetches EOL data from `https://endoflife.date/api/python.json`
 2. Filters out versions that have reached end-of-life
-3. Returns Python 3.9+ versions that are still supported
+3. Returns Python 3.10+ versions that are still supported
 4. Provides real-time security compliance
 
 **Fallback Mechanism:**
 If network access is unavailable or the API request fails, the action falls
 back to a static definition of supported Python versions:
 
-- Python 3.9
 - Python 3.10
 - Python 3.11
 - Python 3.12
@@ -297,13 +356,13 @@ maintainability.
    are still supported
 
 2. **Version Filtering**: Parses the JSON response to extract:
-   - Python version cycles (e.g., "3.9", "3.10", "3.11")
+   - Python version cycles (e.g., "3.10", "3.11", "3.12")
    - End-of-life dates for each version
 
 3. **EOL Comparison**: Compares current date against EOL dates to filter
    out versions that are no longer supported
 
-4. **Version Selection**: Returns Python 3.9+ versions that are:
+4. **Version Selection**: Returns Python 3.10+ versions that are:
    - Not end-of-life (still receiving security updates)
    - Actively maintained by the Python core team
 
@@ -321,7 +380,7 @@ The action includes an `offline_mode` input for environments without internet ac
 When using offline mode:
 
 - Network requests do not occur
-- Uses internal static version list: 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
+- Uses internal static version list: 3.10, 3.11, 3.12, 3.13, 3.14
 - EOL filtering does not occur
 - Perfect for air-gapped or restricted network environments
 
@@ -354,21 +413,21 @@ When dynamic fetching with EOL filtering is successful:
 
 ```text
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 ```
 
 When using offline mode:
 
 ```text
 Using internal supported Python versions (offline mode) 📴
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 ```
 
 When the endoflife.date API is unavailable:
 
 ```text
 Unable to retrieve supported Python versions, using internal list ⚠️
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 ```
 
 ## Testing
@@ -403,8 +462,8 @@ The action handles these scenarios:
 
 Current Python EOL schedule (as of 2025):
 
-- **Python 3.8**: EOL October 7, 2024 (excluded by default)
-- **Python 3.9**: EOL October 31, 2025 (included)
+- **Python 3.8**: EOL October 7, 2024 (excluded)
+- **Python 3.9**: EOL October 31, 2025 (excluded)
 - **Python 3.10**: EOL October 31, 2026 (included)
 - **Python 3.11**: EOL October 31, 2027 (included)
 - **Python 3.12**: EOL October 31, 2028 (included)

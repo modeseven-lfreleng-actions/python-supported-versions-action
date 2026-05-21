@@ -451,6 +451,248 @@ python = "^3.10"')
     rm -f "$test_file"
 }
 
+# Helper: create a temporary setup.cfg fixture and echo its path.
+create_setup_cfg() {
+    local content="$1"
+    local d
+    d=$(mktemp -d)
+    printf '%s\n' "$content" > "$d/setup.cfg"
+    echo "$d/setup.cfg"
+}
+
+# Test extract_requires_python_setup_cfg
+test_extract_requires_python_setup_cfg() {
+    log_section "Testing extract_requires_python_setup_cfg"
+
+    log_test_start "Bare value (no quotes)"
+    local f
+    f=$(create_setup_cfg '[options]
+python_requires = >=3.10')
+    test_output "Bare >=3.10" \
+        "extract_requires_python_setup_cfg '$f'" \
+        ">=3.10"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Double-quoted value"
+    f=$(create_setup_cfg '[options]
+python_requires = ">=3.11"')
+    test_output 'Quoted ">=3.11"' \
+        "extract_requires_python_setup_cfg '$f'" \
+        ">=3.11"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Single-quoted value"
+    f=$(create_setup_cfg "[options]
+python_requires = '==3.12'")
+    test_output "Single-quoted ==3.12" \
+        "extract_requires_python_setup_cfg '$f'" \
+        "==3.12"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Comma-joined range constraint"
+    f=$(create_setup_cfg '[options]
+python_requires = >=3.11,<3.13')
+    test_output "Range >=3.11,<3.13" \
+        "extract_requires_python_setup_cfg '$f'" \
+        ">=3.11,<3.13"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Key absent"
+    f=$(create_setup_cfg '[metadata]
+name = empty')
+    run_test "Missing python_requires should fail" \
+        "extract_requires_python_setup_cfg '$f'" \
+        1
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Key present but outside [options]"
+    f=$(create_setup_cfg '[metadata]
+python_requires = >=3.10
+[options]
+zip_safe = False')
+    run_test "python_requires under [metadata] should not match" \
+        "extract_requires_python_setup_cfg '$f'" \
+        1
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Comment-only file"
+    f=$(create_setup_cfg '# nothing to see here')
+    run_test "No [options] section should fail" \
+        "extract_requires_python_setup_cfg '$f'" \
+        1
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Missing file"
+    run_test "Nonexistent file should fail" \
+        "extract_requires_python_setup_cfg '/nonexistent/setup.cfg'" \
+        1
+}
+
+# Test extract_classifiers_setup_cfg (modern 'classifiers' + legacy 'classifier')
+test_extract_classifiers_setup_cfg() {
+    log_section "Testing extract_classifiers_setup_cfg"
+
+    log_test_start "Modern setuptools 'classifiers'"
+    local f
+    f=$(create_setup_cfg '[metadata]
+name = x
+classifiers =
+    Programming Language :: Python :: 3.10
+    Programming Language :: Python :: 3.11
+    Programming Language :: Python :: 3.12')
+    test_output "Modern classifiers" \
+        "extract_classifiers_setup_cfg '$f'" \
+        "3.10 3.11 3.12"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Legacy PBR 'classifier' (singular)"
+    f=$(create_setup_cfg '[metadata]
+name = legacy
+classifier =
+    Programming Language :: Python :: 3.11
+    Programming Language :: Python :: 3.12
+    Programming Language :: Python :: 3.13')
+    test_output "Legacy classifier" \
+        "extract_classifiers_setup_cfg '$f'" \
+        "3.11 3.12 3.13"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Both keys present, results merged in first-seen order"
+    f=$(create_setup_cfg '[metadata]
+name = both
+classifiers =
+    Programming Language :: Python :: 3.12
+    Programming Language :: Python :: 3.13
+classifier =
+    Programming Language :: Python :: 3.11')
+    test_output "Merged keys" \
+        "extract_classifiers_setup_cfg '$f'" \
+        "3.12 3.13 3.11"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "No Python classifiers present"
+    f=$(create_setup_cfg '[metadata]
+name = nopython
+classifiers =
+    License :: OSI Approved :: Apache Software License
+    Operating System :: OS Independent')
+    run_test "Should fail without Python :: X.Y lines" \
+        "extract_classifiers_setup_cfg '$f'" \
+        1
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Wildcard X.Y.* classifiers ignored"
+    # '3.10.*' must NOT be matched as a minor version. The negative
+    # lookahead in the Python helper guards against this.
+    f=$(create_setup_cfg '[metadata]
+name = wildcard
+classifiers =
+    Programming Language :: Python :: 3.10
+    Programming Language :: Python :: 3.10.*')
+    test_output "Wildcard ignored" \
+        "extract_classifiers_setup_cfg '$f'" \
+        "3.10"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Missing file"
+    run_test "Nonexistent file should fail" \
+        "extract_classifiers_setup_cfg '/nonexistent/setup.cfg'" \
+        1
+}
+
+# Test process_python_constraints_setup_cfg high-level wrapper.
+test_process_python_constraints_setup_cfg() {
+    log_section "Testing process_python_constraints_setup_cfg"
+
+    local available_versions="3.10 3.11 3.12 3.13 3.14"
+
+    log_test_start "python_requires path"
+    local f
+    f=$(create_setup_cfg '[options]
+python_requires = >=3.12')
+    test_output "python_requires >=3.12" \
+        "process_python_constraints_setup_cfg '$f' '$available_versions'" \
+        "3.12 3.13 3.14"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Classifiers fallback path"
+    f=$(create_setup_cfg '[metadata]
+name = cls
+classifiers =
+    Programming Language :: Python :: 3.11
+    Programming Language :: Python :: 3.12')
+    test_output "Classifiers-only setup.cfg" \
+        "process_python_constraints_setup_cfg '$f' '$available_versions'" \
+        "3.11 3.12"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Classifiers with unavailable versions are filtered"
+    f=$(create_setup_cfg '[metadata]
+name = filter
+classifiers =
+    Programming Language :: Python :: 3.8
+    Programming Language :: Python :: 3.9
+    Programming Language :: Python :: 3.12')
+    test_output "Only 3.12 remains after filter" \
+        "process_python_constraints_setup_cfg '$f' '$available_versions'" \
+        "3.12"
+    rm -rf "$(dirname "$f")"
+
+    log_test_start "Empty metadata file (should fail)"
+    f=$(create_setup_cfg '[metadata]
+name = empty')
+    run_test "No usable metadata should fail" \
+        "process_python_constraints_setup_cfg '$f' '$available_versions'" \
+        1
+    rm -rf "$(dirname "$f")"
+}
+
+# Test detect_metadata_source precedence helper.
+test_detect_metadata_source() {
+    log_section "Testing detect_metadata_source"
+
+    log_test_start "pyproject.toml wins over setup.cfg"
+    local d
+    d=$(mktemp -d)
+    printf '[project]\nname = "x"\n' > "$d/pyproject.toml"
+    printf '[metadata]\nname = x\n' > "$d/setup.cfg"
+    test_output "Returns pyproject.toml path" \
+        "detect_metadata_source '$d' 2>/dev/null" \
+        "$d/pyproject.toml"
+    rm -rf "$d"
+
+    log_test_start "setup.cfg used when pyproject.toml absent"
+    d=$(mktemp -d)
+    printf '[metadata]\nname = x\n' > "$d/setup.cfg"
+    test_output "Returns setup.cfg path" \
+        "detect_metadata_source '$d' 2>/dev/null" \
+        "$d/setup.cfg"
+    rm -rf "$d"
+
+    log_test_start "Returns non-zero when neither file exists"
+    d=$(mktemp -d)
+    run_test "Should fail when no metadata files exist" \
+        "detect_metadata_source '$d'" \
+        1
+    rm -rf "$d"
+
+    log_test_start "Source tag is written to stderr"
+    d=$(mktemp -d)
+    printf '[project]\nname = "x"\n' > "$d/pyproject.toml"
+    local tag
+    tag=$(detect_metadata_source "$d" 2>&1 >/dev/null)
+    if [[ "$tag" == "pyproject" ]]; then
+        TOTAL_TESTS=$((TOTAL_TESTS + 1))
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+        log_success "stderr tag = 'pyproject'"
+    else
+        TOTAL_TESTS=$((TOTAL_TESTS + 1))
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        log_error "Expected stderr tag 'pyproject', got '$tag'"
+    fi
+    rm -rf "$d"
+}
+
 # Main test execution
 main() {
     echo -e "${CYAN}"
@@ -468,6 +710,10 @@ main() {
     test_validate_json_format
     test_get_build_version
     test_process_python_constraints
+    test_extract_requires_python_setup_cfg
+    test_extract_classifiers_setup_cfg
+    test_process_python_constraints_setup_cfg
+    test_detect_metadata_source
 
     # Final summary
     log_section "Unit Test Results Summary"
@@ -491,6 +737,10 @@ main() {
         echo "   • validate_json_format ✅"
         echo "   • get_build_version ✅"
         echo "   • process_python_constraints ✅"
+        echo "   • extract_requires_python_setup_cfg ✅"
+        echo "   • extract_classifiers_setup_cfg ✅"
+        echo "   • process_python_constraints_setup_cfg ✅"
+        echo "   • detect_metadata_source ✅"
         echo ""
         exit 0
     else

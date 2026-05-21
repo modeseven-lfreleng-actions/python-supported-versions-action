@@ -180,10 +180,186 @@ jobs:
       - name: 'Validate missing pyproject.toml failure'
         run: |
           if [ "${{ steps.test-missing.outcome }}" != "failure" ]; then
-            echo "Error: Expected test to fail due to missing pyproject.toml"
+            echo "Error: Expected test to fail due to missing metadata files"
             exit 1
           fi
-          echo "Test correctly failed due to missing pyproject.toml"
+          echo "Test correctly failed when neither pyproject.toml nor setup.cfg exists"
+
+  ### Test setup.cfg Fixtures ###
+  # Exercise the legacy setuptools / PBR code path end-to-end against
+  # every setup.cfg fixture in tests/fixtures/. Each matrix entry copies
+  # one fixture into a freshly created workspace as 'setup.cfg' (with no
+  # accompanying pyproject.toml) and asserts the action's outputs.
+  test-setup-cfg-fixtures:
+    name: 'Test setup.cfg Fixtures'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: requires-python-basic
+            file: tests/fixtures/setup_cfg_requires_python_basic.cfg
+            expected_versions: "3.10 3.11 3.12 3.13 3.14"
+            expected_build: "3.14"
+            expected_source: "setup.cfg"
+            should_fail: 'false'
+          - name: classifiers-only
+            file: tests/fixtures/setup_cfg_classifiers_only.cfg
+            expected_versions: "3.11 3.12 3.13"
+            expected_build: "3.13"
+            expected_source: "setup.cfg"
+            should_fail: 'false'
+          - name: pbr-legacy
+            file: tests/fixtures/setup_cfg_pbr_legacy.cfg
+            expected_versions: "3.10 3.11 3.12 3.13 3.14"
+            expected_build: "3.14"
+            expected_source: "setup.cfg"
+            should_fail: 'false'
+          - name: range-constraint
+            file: tests/fixtures/setup_cfg_range_constraint.cfg
+            expected_versions: "3.11 3.12"
+            expected_build: "3.12"
+            expected_source: "setup.cfg"
+            should_fail: 'false'
+          - name: exact-constraint
+            file: tests/fixtures/setup_cfg_exact_constraint.cfg
+            expected_versions: "3.12"
+            expected_build: "3.12"
+            expected_source: "setup.cfg"
+            should_fail: 'false'
+          - name: no-python-info
+            file: tests/fixtures/setup_cfg_no_python_info.cfg
+            should_fail: 'true'
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: 'Prepare setup.cfg fixture workspace'
+        run: |
+          set -euo pipefail
+          workdir="setup-cfg-fixture-${{ matrix.name }}"
+          mkdir -p "$workdir"
+          cp "${{ matrix.file }}" "$workdir/setup.cfg"
+          # Deliberately do NOT create a pyproject.toml so the action
+          # is forced down the setup.cfg branch.
+          echo "WORKDIR=$workdir" >> "$GITHUB_ENV"
+
+      - name: 'Run action on setup.cfg fixture (offline)'
+        id: run
+        uses: ./
+        with:
+          path_prefix: '${{ env.WORKDIR }}/'
+          offline_mode: 'true'
+        continue-on-error: ${{ matrix.should_fail == 'true' }}
+
+      - name: 'Assert outputs for setup.cfg fixture'
+        if: matrix.should_fail != 'true'
+        run: |
+          set -euo pipefail
+          echo "Supported versions: '${{ steps.run.outputs.supported_versions }}'"
+          echo "Build Python: '${{ steps.run.outputs.build_python }}'"
+          echo "Metadata source: '${{ steps.run.outputs.metadata_source }}'"
+
+          actual_json=$(echo '${{ steps.run.outputs.matrix_json }}' | jq -c .)
+          echo "Matrix JSON: '$actual_json'"
+
+          if [ "${{ steps.run.outputs.build_python }}" != "${{ matrix.expected_build }}" ]; then
+            echo "Error: build_python mismatch (expected '${{ matrix.expected_build }}')"
+            exit 1
+          fi
+          if [ "${{ steps.run.outputs.supported_versions }}" != "${{ matrix.expected_versions }}" ]; then
+            echo "Error: supported_versions mismatch (expected '${{ matrix.expected_versions }}')"
+            exit 1
+          fi
+          if [ "${{ steps.run.outputs.metadata_source }}" != "${{ matrix.expected_source }}" ]; then
+            echo "Error: metadata_source mismatch (expected '${{ matrix.expected_source }}')"
+            exit 1
+          fi
+
+          expected_json=$(printf '%s\n' "${{ matrix.expected_versions }}" | tr ' ' '\n' | jq -R . | jq -s -c '{"python-version": .}')
+          if [ "$expected_json" != "$actual_json" ]; then
+            echo "Error: matrix_json mismatch"
+            echo "Expected: $expected_json"
+            echo "Actual:   $actual_json"
+            exit 1
+          fi
+          echo "setup.cfg fixture '${{ matrix.name }}' passed ✅"
+
+      - name: 'Assert failure for setup.cfg fixture'
+        if: matrix.should_fail == 'true'
+        run: |
+          if [ "${{ steps.run.outcome }}" != "failure" ]; then
+            echo "Error: Expected fixture '${{ matrix.name }}' to fail but it succeeded"
+            exit 1
+          fi
+          echo "setup.cfg fixture '${{ matrix.name }}' correctly failed ✅"
+
+  ### Test Metadata Source Precedence ###
+  # Confirm that when BOTH pyproject.toml and setup.cfg are present in
+  # the same directory, the action consults pyproject.toml first and
+  # ignores setup.cfg. This is the documented contract: setup.cfg is a
+  # fallback for legacy projects, not an override for PEP 621 metadata.
+  test-metadata-source-precedence:
+    name: 'Test Metadata Source Precedence'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: 'Prepare mixed-metadata workspace'
+        run: |
+          set -euo pipefail
+          mkdir -p mixed-metadata
+          # pyproject.toml declares >=3.12; setup.cfg declares >=3.10.
+          # If precedence works correctly, only 3.12+ should appear.
+          cat > mixed-metadata/pyproject.toml <<'TOML'
+          [project]
+          name = "mixed"
+          version = "0.1.0"
+          requires-python = ">=3.12"
+          TOML
+          cat > mixed-metadata/setup.cfg <<'CFG'
+          [metadata]
+          name = mixed
+          classifiers =
+              Programming Language :: Python :: 3.10
+              Programming Language :: Python :: 3.11
+
+          [options]
+          python_requires = >=3.10
+          CFG
+
+      - name: 'Run action on mixed-metadata project'
+        id: run
+        uses: ./
+        with:
+          path_prefix: 'mixed-metadata/'
+          offline_mode: 'true'
+
+      - name: 'Assert pyproject.toml took precedence'
+        run: |
+          set -euo pipefail
+          source="${{ steps.run.outputs.metadata_source }}"
+          versions="${{ steps.run.outputs.supported_versions }}"
+          echo "Metadata source: $source"
+          echo "Supported versions: $versions"
+          if [ "$source" != "pyproject.toml" ]; then
+            echo "Error: expected metadata_source='pyproject.toml', got '$source'"
+            exit 1
+          fi
+          # The pyproject.toml requires >=3.12; ensure 3.10/3.11 (from
+          # setup.cfg) did not leak into the result.
+          if echo "$versions" | grep -qE '(^| )3\.1[01]( |$)'; then
+            echo "Error: setup.cfg values leaked through; got '$versions'"
+            exit 1
+          fi
+          echo "Precedence honoured ✅"
 
   ### Test Poetry Fixtures ###
   test-poetry-fixtures:

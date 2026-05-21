@@ -8,6 +8,10 @@
 *.cfg
 !.isort.cfg
 !setup.cfg
+# Allow setup.cfg test fixtures used by the test suite to exercise the
+# legacy setuptools / PBR metadata path. Without this exception, the
+# generic *.cfg ignore swallows them and CI silently regresses.
+!tests/fixtures/setup_cfg_*.cfg
 *.orig
 *.log
 *.pot
