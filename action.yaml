@@ -91,7 +91,7 @@ runs:
 
 
         # Internal list of supported Python versions (requires periodic update)
-        INTERNAL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13 3.14"
+        INTERNAL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
 
         # Setup and validate environment
         path_prefix="${INPUT_PATH_PREFIX}"
@@ -232,7 +232,7 @@ runs:
                 # Verify we got valid JSON array with expected structure
                 if [[ -n "$eol_data" ]] && echo "$eol_data" | jq -e 'type=="array" and length>0 and all(.[]; has("cycle"))' >/dev/null 2>&1; then
                     if [[ "$format" == "versions" ]]; then
-                        # Return processed version list (3.9+)
+                        # Return processed version list (3.10+)
                         printf '%s\n' "$eol_data" | \
                           jq -r '.[] | select(.cycle | test("^(3\\.(9|[1-9][0-9])|[4-9][0-9]*\\.[0-9]+)$")) | .cycle' | \
                           tr '\n' ' ' | sed 's/ $//'

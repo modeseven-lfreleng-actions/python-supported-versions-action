@@ -154,7 +154,7 @@ test_fixture_with_action() {
     pushd "$test_dir" >/dev/null 2>&1
 
     # Simulate the action's core logic using shared utilities
-    local ALL_SUPPORTED_VERSIONS="3.9 3.10 3.11 3.12 3.13 3.14"
+    local ALL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
     local PYTHON_VERSIONS=""
 
     # Use shared utility to process Python constraints
@@ -269,7 +269,7 @@ test_eol_awareness() {
     log_test_start "EOL Version Filtering"
 
     # Test that our static version list excludes EOL versions
-    local supported_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    local supported_versions="3.10 3.11 3.12 3.13 3.14"
 
     echo "   Test versions: $supported_versions"
 
@@ -280,15 +280,14 @@ test_eol_awareness() {
         return
     fi
 
-    # Check that we have reasonable versions (3.9+)
-    if ! echo "$supported_versions" | grep -q "3.9"; then
-        log_error "Expected to find Python 3.9 in supported versions"
+    # Check that we have reasonable versions (3.10+)
+    if ! echo "$supported_versions" | grep -q "3.10"; then
+        log_error "Expected to find Python 3.10 in supported versions"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         return
     fi
 
-    log_success "EOL Version Filtering - Python 3.8 correctly excluded"
-    PASSED_TESTS=$((PASSED_TESTS + 1))
+    log_success "EOL Version Filtering - Python 3.8 and 3.9 correctly excluded"
     echo ""
 }
 
@@ -300,9 +299,9 @@ test_network_fallback() {
     log_test_start "Static Fallback Mechanism"
 
     # Verify static fallback works
-    local static_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    local static_versions="3.10 3.11 3.12 3.13 3.14"
 
-    if [ -n "$static_versions" ] && echo "$static_versions" | grep -q "3.9"; then
+    if [ -n "$static_versions" ] && echo "$static_versions" | grep -q "3.10"; then
         log_success "Static Fallback - Versions available when network unavailable"
         echo "   Static versions: $static_versions"
         PASSED_TESTS=$((PASSED_TESTS + 1))
@@ -346,21 +345,21 @@ test_eol_api_logic() {
             return
         fi
 
-        # Check for minimum expected versions (3.9+)
-        if echo "$versions" | grep -q "3.9" && echo "$versions" | grep -q "3.1[0-9]"; then
-            log_success "Found expected minimum versions (3.9+)"
+        # Check for minimum expected versions (3.10+)
+        if echo "$versions" | grep -q "3.10"; then
+            log_success "Found expected minimum version (3.10)"
         else
             log_warning "Expected versions not found"
-            echo "   Expected to find 3.9 and 3.1x versions"
+            echo "   Expected to find 3.10+ versions"
         fi
 
-        # Check that EOL versions are excluded (Python 3.8)
-        if echo "$versions" | grep -q "3.8"; then
-            log_error "Python 3.8 should be EOL but was included"
+        # Check that EOL versions are excluded (Python 3.8 and 3.9)
+        if echo "$versions" | grep -q "3.8\|3.9"; then
+            log_error "EOL Python (3.8/3.9) should not be in API result"
             FAILED_TESTS=$((FAILED_TESTS + 1))
             return
         else
-            log_success "Python 3.8 correctly excluded (EOL)"
+            log_success "EOL Python versions (3.8, 3.9) correctly excluded"
         fi
 
         PASSED_TESTS=$((PASSED_TESTS + 1))

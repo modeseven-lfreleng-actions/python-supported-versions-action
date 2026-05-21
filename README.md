@@ -232,7 +232,7 @@ A workflow calling this action will produce the output below:
 
 ```console
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 Found requires-python constraint (via fallback): >=3.10
 🔍 Processed requires-python constraint
 Python versions from constraints: 3.10 3.11 3.12 3.13 3.14
@@ -342,14 +342,13 @@ actively maintained Python versions remain available.
 
 1. Fetches EOL data from `https://endoflife.date/api/python.json`
 2. Filters out versions that have reached end-of-life
-3. Returns Python 3.9+ versions that are still supported
+3. Returns Python 3.10+ versions that are still supported
 4. Provides real-time security compliance
 
 **Fallback Mechanism:**
 If network access is unavailable or the API request fails, the action falls
 back to a static definition of supported Python versions:
 
-- Python 3.9
 - Python 3.10
 - Python 3.11
 - Python 3.12
@@ -374,13 +373,13 @@ maintainability.
    are still supported
 
 2. **Version Filtering**: Parses the JSON response to extract:
-   - Python version cycles (e.g., "3.9", "3.10", "3.11")
+   - Python version cycles (e.g., "3.10", "3.11", "3.12")
    - End-of-life dates for each version
 
 3. **EOL Comparison**: Compares current date against EOL dates to filter
    out versions that are no longer supported
 
-4. **Version Selection**: Returns Python 3.9+ versions that are:
+4. **Version Selection**: Returns Python 3.10+ versions that are:
    - Not end-of-life (still receiving security updates)
    - Actively maintained by the Python core team
 
@@ -398,7 +397,7 @@ The action includes an `offline_mode` input for environments without internet ac
 When using offline mode:
 
 - Network requests do not occur
-- Uses internal static version list: 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
+- Uses internal static version list: 3.10, 3.11, 3.12, 3.13, 3.14
 - EOL filtering does not occur
 - Perfect for air-gapped or restricted network environments
 
@@ -431,21 +430,21 @@ When dynamic fetching with EOL filtering is successful:
 
 ```text
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 ```
 
 When using offline mode:
 
 ```text
 Using internal supported Python versions (offline mode) 📴
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 ```
 
 When the endoflife.date API is unavailable:
 
 ```text
 Unable to retrieve supported Python versions, using internal list ⚠️
-Supported versions: 3.9 3.10 3.11 3.12 3.13 3.14
+Supported versions: 3.10 3.11 3.12 3.13 3.14
 ```
 
 ## Testing
@@ -481,7 +480,7 @@ The action handles these scenarios:
 Current Python EOL schedule (as of 2025):
 
 - **Python 3.8**: EOL October 7, 2024 (excluded by default)
-- **Python 3.9**: EOL October 31, 2025 (included)
+- **Python 3.9**: EOL October 31, 2025 (excluded)
 - **Python 3.10**: EOL October 31, 2026 (included)
 - **Python 3.11**: EOL October 31, 2027 (included)
 - **Python 3.12**: EOL October 31, 2028 (included)

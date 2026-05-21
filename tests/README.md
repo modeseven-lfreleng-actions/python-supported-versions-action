@@ -123,8 +123,8 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 
 ### EOL-Aware Version Support
 
-- **Excluded**: Python 3.8 and earlier (End-of-Life)
-- **Included**: Python 3.9, 3.10, 3.11, 3.12, 3.13, 3.14 (supported)
+- **Excluded**: Python 3.9 and earlier (End-of-Life)
+- **Included**: Python 3.10, 3.11, 3.12, 3.13, 3.14 (supported)
 
 ### Sample Outputs
 
