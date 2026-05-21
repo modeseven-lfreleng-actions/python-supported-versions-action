@@ -280,6 +280,14 @@ test_eol_awareness() {
         return
     fi
 
+    # Also assert 3.9 is excluded; 3.9 reached EOL 2025-10-31 and was
+    # removed from the static fallback in the same commit chain.
+    if echo "$supported_versions" | grep -q "3.9"; then
+        log_error "Python 3.9 should be EOL but was included in test versions"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        return
+    fi
+
     # Check that we have reasonable versions (3.10+)
     if ! echo "$supported_versions" | grep -q "3.10"; then
         log_error "Expected to find Python 3.10 in supported versions"
@@ -288,6 +296,7 @@ test_eol_awareness() {
     fi
 
     log_success "EOL Version Filtering - Python 3.8 and 3.9 correctly excluded"
+    PASSED_TESTS=$((PASSED_TESTS + 1))
     echo ""
 }
 
@@ -354,7 +363,7 @@ test_eol_api_logic() {
         fi
 
         # Check that EOL versions are excluded (Python 3.8 and 3.9)
-        if echo "$versions" | grep -q "3.8\|3.9"; then
+        if echo "$versions" | grep -Eq "3\.(8|9)"; then
             log_error "EOL Python (3.8/3.9) should not be in API result"
             FAILED_TESTS=$((FAILED_TESTS + 1))
             return

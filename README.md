@@ -453,10 +453,12 @@ Supported versions: 3.10 3.11 3.12 3.13 3.14
 
 To manually test the action behavior:
 
+<!-- markdownlint-disable MD013 -->
+
 ```bash
 # Test EOL API endpoint directly
 curl -s "https://endoflife.date/api/python.json" | \
-  jq -r '.[] | select(.cycle | test("^3\\.(9|[1-9][0-9])$")) | .cycle'
+  jq -r '.[] | select(.cycle | test("^(3\\.(1[0-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\\.[0-9]+)$")) | .cycle'
 
 # Test with a sample pyproject.toml
 echo 'requires-python = ">=3.10"' > test_pyproject.toml
@@ -464,6 +466,8 @@ echo 'requires-python = ">=3.10"' > test_pyproject.toml
 # Run the action locally (if using act or similar)
 act -j test
 ```
+
+<!-- markdownlint-enable MD013 -->
 
 ### Expected Behavior
 

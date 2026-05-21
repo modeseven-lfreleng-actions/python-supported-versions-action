@@ -108,7 +108,7 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 
 ### EOL-Aware Features
 
-- ✅ **EOL version filtering** - Automatically excludes Python 3.8 and earlier
+- ✅ **EOL version filtering** - Automatically excludes Python 3.9 and earlier
 - ✅ **Dynamic version fetching** - Uses live data from official sources
 - ✅ **Network fallback mechanisms** - Works in air-gapped environments
 - ✅ **Static EOL data fallback** - Embedded EOL dates through 2029
