@@ -20,6 +20,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
 jobs:
   ### Comprehensive Test Suite (All Fixtures) ###
   test-comprehensive:
@@ -37,6 +41,8 @@ jobs:
 
       - name: 'Checkout repository'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Run comprehensive test suite'
         run: |
@@ -53,12 +59,15 @@ jobs:
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Checkout sample project repository'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: 'lfreleng-actions/test-python-project'
           path: 'test-python-project'
+          persist-credentials: false
 
       # yamllint disable rule:line-length
 
@@ -172,6 +181,8 @@ jobs:
       - name: 'Checkout repository'
         # yamllint disable-line rule:line-length
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Create empty test directory'
         run: mkdir -p empty-test-dir
@@ -247,13 +258,18 @@ jobs:
     steps:
       - name: 'Checkout repository'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: 'Prepare fixture workspace'
+        env:
+          FIXTURE_NAME: ${{ matrix.name }}
+          FIXTURE_FILE: ${{ matrix.file }}
         run: |
           set -euo pipefail
-          workdir="poetry-fixture-${{ matrix.name }}"
+          workdir="poetry-fixture-$FIXTURE_NAME"
           mkdir -p "$workdir"
-          cp "${{ matrix.file }}" "$workdir/pyproject.toml"
+          cp "$FIXTURE_FILE" "$workdir/pyproject.toml"
           echo "WORKDIR=$workdir" >> "$GITHUB_ENV"
 
       - name: 'Run action on Poetry fixture (offline)'
@@ -264,26 +280,33 @@ jobs:
           offline_mode: 'true'
 
       - name: 'Assert outputs for Poetry fixture'
+        env:
+          FIXTURE_NAME: ${{ matrix.name }}
+          EXPECTED_BUILD: ${{ matrix.expected_build }}
+          EXPECTED_VERSIONS: ${{ matrix.expected_versions }}
+          SUPPORTED_VERSIONS: ${{ steps.run.outputs.supported_versions }}
+          BUILD_PYTHON: ${{ steps.run.outputs.build_python }}
+          MATRIX_JSON: ${{ steps.run.outputs.matrix_json }}
         # yamllint disable rule:line-length
         run: |
-          echo "Supported versions: '${{ steps.run.outputs.supported_versions }}'"
-          echo "Build Python: '${{ steps.run.outputs.build_python }}'"
+          echo "Supported versions: '$SUPPORTED_VERSIONS'"
+          echo "Build Python: '$BUILD_PYTHON'"
 
           # Use the raw matrix_json output and compact it with jq for consistent comparison
-          actual_json=$(echo '${{ steps.run.outputs.matrix_json }}' | jq -c .)
+          actual_json=$(printf '%s' "$MATRIX_JSON" | jq -c .)
           echo "Matrix JSON: '$actual_json'"
 
-          if [ "${{ steps.run.outputs.build_python }}" != "${{ matrix.expected_build }}" ]; then
-            echo "Error: build_python mismatch (expected '${{ matrix.expected_build }}')"
+          if [ "$BUILD_PYTHON" != "$EXPECTED_BUILD" ]; then
+            echo "Error: build_python mismatch (expected '$EXPECTED_BUILD')"
             exit 1
           fi
-          if [ "${{ steps.run.outputs.supported_versions }}" != "${{ matrix.expected_versions }}" ]; then
-            echo "Error: supported_versions mismatch (expected '${{ matrix.expected_versions }}')"
+          if [ "$SUPPORTED_VERSIONS" != "$EXPECTED_VERSIONS" ]; then
+            echo "Error: supported_versions mismatch (expected '$EXPECTED_VERSIONS')"
             exit 1
           fi
 
           # Construct expected JSON using jq to ensure formatting matches
-          expected_json=$(printf '%s\n' "${{ matrix.expected_versions }}" | tr ' ' '\n' | jq -R . | jq -s -c '{"python-version": .}')
+          expected_json=$(printf '%s\n' "$EXPECTED_VERSIONS" | tr ' ' '\n' | jq -R . | jq -s -c '{"python-version": .}')
 
           if [ "$expected_json" != "$actual_json" ]; then
             echo "Error: matrix_json mismatch"
@@ -291,4 +314,4 @@ jobs:
             echo "Actual:   $actual_json"
             exit 1
           fi
-          echo "Poetry fixture '${{ matrix.name }}' passed ✅"
+          echo "Poetry fixture '$FIXTURE_NAME' passed ✅"
