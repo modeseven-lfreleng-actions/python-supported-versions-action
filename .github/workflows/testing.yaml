@@ -79,32 +79,30 @@ jobs:
 
       - name: 'Validate External Project Output'
         run: |
-          echo "Build Python: '${{ steps.test-external.outputs.build_python }}'"
+          echo "Build Python: '${STEPS_TEST_EXTERNAL_OUTPUTS_BUILD_PYTHON}'"
 
           # Use the raw matrix_json output and compact it with jq for consistent comparison
-          actual_json=$(echo '${{ steps.test-external.outputs.matrix_json }}' | jq -c .)
+          actual_json=$(echo "${STEPS_TEST_EXTERNAL_OUTPUTS_MATRIX_JSON}" | jq -c .)
           echo "Matrix JSON: '$actual_json'"
 
           # Validate that outputs are not empty
-          if [ -z "${{ steps.test-external.outputs.build_python }}" ]; then
+          if [ -z "${STEPS_TEST_EXTERNAL_OUTPUTS_BUILD_PYTHON}" ]; then
             echo "Error: build_python output is empty"
             exit 1
           fi
-          if [ -z "${{ steps.test-external.outputs.matrix_json }}" ]; then
+          if [ -z "${STEPS_TEST_EXTERNAL_OUTPUTS_MATRIX_JSON}" ]; then
             echo "Error: matrix_json output is empty"
             exit 1
           fi
 
           # Validate matrix_json contains only valid Python versions (no text values)
           # Extract the python-version array and check each element is a valid version number
-          # yamllint disable-line rule:line-length
           if ! echo "$actual_json" | jq -e '.["python-version"] | type == "array"' >/dev/null; then
             echo "Error: matrix_json does not contain a python-version array"
             exit 1
           fi
 
           # Check that all array elements are valid version strings (X.Y format)
-          # yamllint disable-line rule:line-length
           invalid_versions=$(echo "$actual_json" | jq -r '.["python-version"][] | select(test("^[0-9]+\\.[0-9]+$") | not)')
           if [ -n "$invalid_versions" ]; then
             echo "Error: matrix_json contains invalid version entries:"
@@ -150,7 +148,6 @@ jobs:
           # '|| true' to tolerate a no-match exit, then rely on the
           # explicit '[ -z ... ]' check to diagnose extraction failures
           # distinctly from genuine action/output disagreements.
-          # yamllint disable-line rule:line-length
           classifier_versions=$(grep -v '^[[:space:]]*#' "$pyproject" | grep -oE 'Programming Language :: Python :: [0-9]+\.[0-9]+' | awk -F':: ' '{print $NF}' | sort -t. -k1,1n -k2,2n | awk '!seen[$0]++' || true)
           if [ -z "$classifier_versions" ]; then
             echo "Error: no 'Programming Language :: Python :: X.Y' classifiers found in $pyproject"
@@ -158,7 +155,6 @@ jobs:
             exit 1
           fi
 
-          # yamllint disable-line rule:line-length
           expected_json=$(printf '%s\n' "$classifier_versions" | jq -R . | jq -s -c '{"python-version": .}')
           echo "Expected (derived from classifiers): '$expected_json'"
           if [ "$expected_json" != "$actual_json" ]; then
@@ -169,6 +165,9 @@ jobs:
           fi
 
           echo "External repository test passed ✅"
+        env:
+          STEPS_TEST_EXTERNAL_OUTPUTS_BUILD_PYTHON: ${{ steps.test-external.outputs.build_python }}
+          STEPS_TEST_EXTERNAL_OUTPUTS_MATRIX_JSON: ${{ steps.test-external.outputs.matrix_json }}
 
   ### Test Missing project metadata files (fallback behaviour) ###
   test-missing-pyproject:
