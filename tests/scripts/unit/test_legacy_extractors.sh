@@ -58,7 +58,7 @@ assert_rc() {
     fi
 }
 
-AVAILABLE="3.9 3.10 3.11 3.12 3.13 3.14"
+AVAILABLE="3.9 3.10 3.11 3.12 3.13 3.14 3.15"
 
 test_setup_cfg() {
     log_section "extract_setup_cfg_*"
@@ -185,7 +185,7 @@ EOF
     log_test "layered: pyproject takes priority"
     local out
     out=$(process_python_constraints_layered "$d" "$AVAILABLE")
-    assert_eq "pyproject versions" "3.11 3.12 3.13 3.14" "$(echo "$out" | sed -n '1p')"
+    assert_eq "pyproject versions" "3.11 3.12 3.13 3.14 3.15" "$(echo "$out" | sed -n '1p')"
     assert_eq "pyproject source" "requires-python" "$(echo "$out" | sed -n '2p')"
     rm -rf "$d"
 
@@ -197,7 +197,7 @@ python_requires = >=3.10
 EOF
     log_test "layered: setup.cfg requires-python only"
     out=$(process_python_constraints_layered "$d" "$AVAILABLE")
-    assert_eq "setup.cfg versions" "3.10 3.11 3.12 3.13 3.14" "$(echo "$out" | sed -n '1p')"
+    assert_eq "setup.cfg versions" "3.10 3.11 3.12 3.13 3.14 3.15" "$(echo "$out" | sed -n '1p')"
     assert_eq "setup.cfg source" "setup-cfg-requires" "$(echo "$out" | sed -n '2p')"
     rm -rf "$d"
 
@@ -223,7 +223,7 @@ setup(python_requires=">=3.12")
 EOF
     log_test "layered: setup.py requires-python only"
     out=$(process_python_constraints_layered "$d" "$AVAILABLE")
-    assert_eq "setup.py versions" "3.12 3.13 3.14" "$(echo "$out" | sed -n '1p')"
+    assert_eq "setup.py versions" "3.12 3.13 3.14 3.15" "$(echo "$out" | sed -n '1p')"
     assert_eq "setup.py source" "setup-py-requires" "$(echo "$out" | sed -n '2p')"
     rm -rf "$d"
 

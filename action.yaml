@@ -10,7 +10,7 @@ description: "Returns Python version(s) for build and JSON for matrix jobs"
 # Primary extraction method uses 'requires-python' from pyproject.toml
 # This brings alignment with actions/setup-python behavior
 # e.g. requires-python = ">=3.10" extracts supported versions 3.10, 3.11,
-# 3.12, 3.13
+# 3.12, 3.13, 3.14, 3.15
 # Falls back to 'Programming Language :: Python ::' classifiers if
 # requires-python not found
 
@@ -91,7 +91,7 @@ runs:
 
 
         # Internal list of supported Python versions (requires periodic update)
-        INTERNAL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
+        INTERNAL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14 3.15"
 
         # Setup and validate environment
         path_prefix="${INPUT_PATH_PREFIX}"

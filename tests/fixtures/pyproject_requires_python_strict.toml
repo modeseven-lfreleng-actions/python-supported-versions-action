@@ -6,7 +6,7 @@
 # TEST_TYPE: requires-python
 # SHOULD_FAIL: false
 # EXPECTED_MIN_VERSION: 3.12
-# EXPECTED_VERSIONS_COUNT: 3
+# EXPECTED_VERSIONS_COUNT: 4
 # DESCRIPTION: Tests strict >=3.12 constraint limiting to newer versions
 
 [project]

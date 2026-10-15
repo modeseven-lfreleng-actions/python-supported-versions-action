@@ -106,13 +106,23 @@ jobs:
             exit 1
           fi
 
-          # For test-python-project, derive expected Python versions directly
+          # For test-python-project, derive the expected Python versions
           # from the classifiers in the checked-out pyproject.toml. This avoids
           # reliance on the repository-level EXPECTED_VERSION_JSON variable,
           # which is not reliably populated for pull_request events from forks
           # and also requires manual updates whenever the upstream project's
           # classifiers change. Parsing the source of truth keeps the test
-          # self-contained and drift-free.
+          # self-contained.
+          #
+          # The project also declares an open-ended requires-python (e.g.
+          # ">=3.11"), which the action rightly prefers over classifiers. When
+          # a new CPython minor ships, the live API offers it before the
+          # project adds a matching classifier, so the matrix legitimately
+          # grows past the newest classifier. An exact match would then fail
+          # on every CPython release, so instead assert that:
+          #   * every classifier version appears in the matrix, and
+          #   * any extra version is newer than the newest classifier.
+          # Extra versions inside the declared range still fail the test.
           pyproject='test-python-project/pyproject.toml'
           if [ ! -f "$pyproject" ]; then
             echo "Error: expected file not found: $pyproject"
@@ -152,11 +162,34 @@ jobs:
 
           expected_json=$(printf '%s\n' "$classifier_versions" | jq -R . | jq -s -c '{"python-version": .}')
           echo "Expected (derived from classifiers): '$expected_json'"
-          if [ "$expected_json" != "$actual_json" ]; then
+
+          # Compare numerically ("3.10" > "3.9") by splitting X.Y into [X, Y]
+          comparison=$(jq -n -c --argjson e "$expected_json" --argjson a "$actual_json" '
+            def key: split(".") | map(tonumber);
+            $e["python-version"] as $want
+            | $a["python-version"] as $got
+            | ($want | max_by(key) | key) as $top
+            | {
+                missing: ($want - $got),
+                newer: [($got - $want)[] | select(key > $top)],
+                unexpected: [($got - $want)[] | select(key <= $top)]
+              }')
+
+          missing=$(echo "$comparison" | jq -r '.missing | join(" ")')
+          unexpected=$(echo "$comparison" | jq -r '.unexpected | join(" ")')
+          newer=$(echo "$comparison" | jq -r '.newer | join(" ")')
+
+          if [ -n "$missing" ] || [ -n "$unexpected" ]; then
             echo "Error: matrix_json mismatch for test-python-project"
             echo "Expected: $expected_json"
             echo "Actual:   $actual_json"
+            [ -n "$missing" ] && echo "Missing classifier versions: $missing"
+            [ -n "$unexpected" ] && echo "Unexpected versions within the classifier range: $unexpected"
             exit 1
+          fi
+
+          if [ -n "$newer" ]; then
+            echo "::notice::Matrix includes CPython releases newer than test-python-project's classifiers: $newer"
           fi
 
           echo "External repository test passed ✅"
@@ -328,8 +361,8 @@ jobs:
         include:
           - name: poetry-caret
             file: tests/fixtures/pyproject_poetry_caret.toml
-            expected_versions: "3.10 3.11 3.12 3.13 3.14"
-            expected_build: "3.14"
+            expected_versions: "3.10 3.11 3.12 3.13 3.14 3.15"
+            expected_build: "3.15"
           - name: poetry-compatible
             file: tests/fixtures/pyproject_poetry_compatible.toml
             expected_versions: "3.11"
