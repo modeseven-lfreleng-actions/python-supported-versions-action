@@ -153,8 +153,10 @@ test_fixture_with_action() {
     # Change to test directory
     pushd "$test_dir" >/dev/null 2>&1
 
-    # Simulate the action's core logic using shared utilities
-    local ALL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14"
+    # Simulate the action's core logic using shared utilities, against the
+    # same static list the action falls back to when offline
+    local ALL_SUPPORTED_VERSIONS
+    ALL_SUPPORTED_VERSIONS=$(get_static_python_versions)
     local PYTHON_VERSIONS=""
 
     # Use shared utility to process Python constraints
@@ -269,7 +271,8 @@ test_eol_awareness() {
     log_test_start "EOL Version Filtering"
 
     # Test that our static version list excludes EOL versions
-    local supported_versions="3.10 3.11 3.12 3.13 3.14"
+    local supported_versions
+    supported_versions=$(get_static_python_versions)
 
     echo "   Test versions: $supported_versions"
 
@@ -295,6 +298,13 @@ test_eol_awareness() {
         return
     fi
 
+    # Python 3.15 was released 2026-10-09; the static fallback must offer it
+    if ! echo "$supported_versions" | grep -qw "3\.15"; then
+        log_error "Expected to find Python 3.15 in supported versions"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+        return
+    fi
+
     log_success "EOL Version Filtering - Python 3.8 and 3.9 correctly excluded"
     PASSED_TESTS=$((PASSED_TESTS + 1))
     echo ""
@@ -307,16 +317,25 @@ test_network_fallback() {
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     log_test_start "Static Fallback Mechanism"
 
-    # Verify static fallback works
-    local static_versions="3.10 3.11 3.12 3.13 3.14"
+    # The action embeds its own copy of the static list; it must match the
+    # library copy, or offline results would differ between the two paths
+    local static_versions action_versions
+    static_versions=$(get_static_python_versions)
+    action_versions=$(sed -n 's/^[[:space:]]*INTERNAL_SUPPORTED_VERSIONS="\([^"]*\)".*/\1/p' \
+        "$ACTION_DIR/action.yaml" | head -1)
 
-    if [ -n "$static_versions" ] && echo "$static_versions" | grep -q "3.10"; then
+    if [ -z "$static_versions" ] || ! echo "$static_versions" | grep -q "3.10"; then
+        log_error "Static fallback failed to provide valid versions"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    elif [ "$static_versions" != "$action_versions" ]; then
+        log_error "Static version lists have drifted apart"
+        echo "   lib/eol_utils.sh: '$static_versions'"
+        echo "   action.yaml:      '$action_versions'"
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    else
         log_success "Static Fallback - Versions available when network unavailable"
         echo "   Static versions: $static_versions"
         PASSED_TESTS=$((PASSED_TESTS + 1))
-    else
-        log_error "Static fallback failed to provide valid versions"
-        FAILED_TESTS=$((FAILED_TESTS + 1))
     fi
 
     echo ""

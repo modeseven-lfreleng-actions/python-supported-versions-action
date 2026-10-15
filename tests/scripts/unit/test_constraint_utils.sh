@@ -193,14 +193,15 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: 3.16",
 ]')
 
-    # Simulate available versions that don't include 3.15
-    local available_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    # Simulate available versions that don't include 3.16
+    local available_versions="3.9 3.10 3.11 3.12 3.13 3.14 3.15"
 
     test_output "Classifier filtering" \
         "process_python_constraints '$test_file' '$available_versions'" \
-        "3.9 3.10 3.14"
+        "3.9 3.10 3.14 3.15"
 
     rm -f "$test_file"
 
@@ -212,7 +213,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]')
 
-    available_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    available_versions="3.9 3.10 3.11 3.12 3.13 3.14 3.15"
 
     test_output "All classifiers available" \
         "process_python_constraints '$test_file' '$available_versions'" \
@@ -225,13 +226,13 @@ classifiers = [
 test_parse_version_constraint() {
     log_section "Testing parse_version_constraint"
 
-    local available_versions="3.8 3.9 3.10 3.11 3.12 3.13 3.14"
+    local available_versions="3.8 3.9 3.10 3.11 3.12 3.13 3.14 3.15"
 
     # Test 1: Greater than or equal constraint
     log_test_start "Greater than or equal constraint"
     test_output ">=3.10 constraint" \
         "parse_version_constraint '>=3.10' '$available_versions'" \
-        "3.10 3.11 3.12 3.13 3.14"
+        "3.10 3.11 3.12 3.13 3.14 3.15"
 
     # Test 2: Less than constraint
     log_test_start "Less than constraint"
@@ -249,7 +250,7 @@ test_parse_version_constraint() {
     log_test_start "Greater than constraint"
     test_output ">3.9 constraint" \
         "parse_version_constraint '>3.9' '$available_versions'" \
-        "3.10 3.11 3.12 3.13 3.14"
+        "3.10 3.11 3.12 3.13 3.14 3.15"
 
     # Test 5: Exact version constraint
     log_test_start "Exact version constraint"
@@ -291,13 +292,13 @@ test_parse_version_constraint() {
     log_test_start "Caret constraint (^3.10)"
     test_output "^3.10 constraint" \
         "parse_version_constraint '^3.10' '$available_versions'" \
-        "3.10 3.11 3.12 3.13 3.14"
+        "3.10 3.11 3.12 3.13 3.14 3.15"
 
     # Test 12: Poetry caret (^) with patch
     log_test_start "Caret constraint (^3.10.1)"
     test_output "^3.10.1 constraint" \
         "parse_version_constraint '^3.10.1' '$available_versions'" \
-        "3.10 3.11 3.12 3.13 3.14"
+        "3.10 3.11 3.12 3.13 3.14 3.15"
 
     # Test 13: Wildcard exact (==3.10.*)
     log_test_start "Wildcard exact (==3.10.*)"
@@ -309,7 +310,7 @@ test_parse_version_constraint() {
     log_test_start "Exclusion (!=3.10)"
     test_output "!=3.10 constraint" \
         "parse_version_constraint '!=3.10' '$available_versions'" \
-        "3.8 3.9 3.11 3.12 3.13 3.14"
+        "3.8 3.9 3.11 3.12 3.13 3.14 3.15"
 }
 
 # Test generate_matrix_json function
@@ -408,7 +409,7 @@ test_get_build_version() {
 test_process_python_constraints() {
     log_section "Testing process_python_constraints (Integration)"
 
-    local available_versions="3.9 3.10 3.11 3.12 3.13 3.14"
+    local available_versions="3.9 3.10 3.11 3.12 3.13 3.14 3.15"
 
     # Test 1: requires-python constraint
     log_test_start "Process requires-python constraint"
@@ -417,7 +418,7 @@ test_process_python_constraints() {
 requires-python = ">=3.10"')
     test_output "Process requires-python" \
         "process_python_constraints '$test_file' '$available_versions'" \
-        "3.10 3.11 3.12 3.13 3.14"
+        "3.10 3.11 3.12 3.13 3.14 3.15"
     rm -f "$test_file"
 
     # Test 2: Fallback to classifiers
@@ -447,7 +448,7 @@ name = "test-project"')
 python = "^3.10"')
     test_output "Process Poetry constraint (^3.10)" \
         "process_python_constraints '$test_file' '$available_versions'" \
-        "3.10 3.11 3.12 3.13 3.14"
+        "3.10 3.11 3.12 3.13 3.14 3.15"
     rm -f "$test_file"
 }
 

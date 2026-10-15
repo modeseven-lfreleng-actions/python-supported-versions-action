@@ -119,19 +119,19 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 - ✅ Maintains security compliance through automatic EOL exclusion
 - ✅ Comprehensive error handling prevents workflow failures
 
-## Expected Behavior (Current as of 2025)
+## Expected Behavior (Current as of 2026)
 
 ### EOL-Aware Version Support
 
 - **Excluded**: Python 3.9 and earlier (End-of-Life)
-- **Included**: Python 3.10, 3.11, 3.12, 3.13, 3.14 (supported)
+- **Included**: Python 3.10, 3.11, 3.12, 3.13, 3.14, 3.15 (supported)
 
 ### Sample Outputs
 
 #### Basic requires-python (>=3.10)
 
-- BUILD_PYTHON: `3.14` (latest supported)
-- MATRIX_JSON: `{"python-version": ["3.10","3.11","3.12","3.13","3.14"]}`
+- BUILD_PYTHON: `3.15` (latest supported)
+- MATRIX_JSON: `{"python-version": ["3.10","3.11","3.12","3.13","3.14","3.15"]}`
 
 #### Exact constraint (==3.11)
 
