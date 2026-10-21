@@ -26,20 +26,20 @@ all temporary scripts created during code development/testing.
 The `fixtures/` directory contains self-describing test cases with embedded
 metadata:
 
-- `pyproject_requires_python_basic.toml` - Basic `>=3.10` constraint
+- `pyproject_requires_python_basic.toml` - Basic `>=3.11` constraint
 - `pyproject_requires_python_strict.toml` - Strict `>=3.12` constraint
 - `pyproject_requires_python_exact.toml` - Exact `==3.11` constraint
-- `pyproject_requires_python_greater.toml` - Greater than `>3.10` constraint
-- `pyproject_complex_constraint.toml` - Complex constraint `>=3.10,<3.14`
-- `pyproject_inclusive_constraint.toml` - Inclusive upper bound `>=3.10,<=3.12`
+- `pyproject_requires_python_greater.toml` - Greater than `>3.11` constraint
+- `pyproject_complex_constraint.toml` - Complex constraint `>=3.11,<3.15`
+- `pyproject_inclusive_constraint.toml` - Inclusive upper bound `>=3.11,<=3.13`
 - `pyproject_mixed_versions.toml` - Mixed scenarios with conflicting version
   info
 - `pyproject_classifiers_only.toml` - Uses Python classifiers (no
   requires-python)
 - `pyproject_classifiers_fallback.toml` - Fallback to classifiers method
 - `pyproject_no_python_info.toml` - No Python version information (error case)
-- `pyproject_unsupported_constraint.toml` - Compatible release `~=3.10.0` (now supported)
-- `pyproject_poetry_caret.toml` - Poetry caret constraint `^3.10`
+- `pyproject_unsupported_constraint.toml` - Compatible release `~=3.11.0` (now supported)
+- `pyproject_poetry_caret.toml` - Poetry caret constraint `^3.11`
 - `pyproject_poetry_compatible.toml` - Poetry compatible release `~=3.11`
 - `pyproject_poetry_exact.toml` - Poetry exact pin `==3.12`
 
@@ -49,12 +49,12 @@ Each fixture file contains embedded test metadata in comments:
 
 ```toml
 # TEST_METADATA:
-# TEST_NAME: Basic requires-python constraint (>=3.10)
+# TEST_NAME: Basic requires-python constraint (>=3.11)
 # TEST_TYPE: requires-python|poetry-requires-python|classifiers|error-case
 # SHOULD_FAIL: false
-# EXPECTED_MIN_VERSION: 3.10
-# EXPECTED_VERSIONS_COUNT: 4
-# DESCRIPTION: Tests basic >=3.10 constraint with dynamic EOL-aware filtering
+# EXPECTED_MIN_VERSION: 3.11
+# EXPECTED_VERSIONS_COUNT: 5
+# DESCRIPTION: Tests basic >=3.11 constraint with dynamic EOL-aware filtering
 ```
 
 Supported optional expectations:
@@ -108,7 +108,7 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 
 ### EOL-Aware Features
 
-- ✅ **EOL version filtering** - Automatically excludes Python 3.9 and earlier
+- ✅ **EOL version filtering** - Automatically excludes Python 3.10 and earlier
 - ✅ **Dynamic version fetching** - Uses live data from official sources
 - ✅ **Network fallback mechanisms** - Works in air-gapped environments
 - ✅ **Static EOL data fallback** - Embedded EOL dates through 2029
@@ -123,15 +123,15 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 
 ### EOL-Aware Version Support
 
-- **Excluded**: Python 3.9 and earlier (End-of-Life)
-- **Included**: Python 3.10, 3.11, 3.12, 3.13, 3.14, 3.15 (supported)
+- **Excluded**: Python 3.10 and earlier (End-of-Life)
+- **Included**: Python 3.11, 3.12, 3.13, 3.14, 3.15 (supported)
 
 ### Sample Outputs
 
-#### Basic requires-python (>=3.10)
+#### Basic requires-python (>=3.11)
 
 - BUILD_PYTHON: `3.15` (latest supported)
-- MATRIX_JSON: `{"python-version": ["3.10","3.11","3.12","3.13","3.14","3.15"]}`
+- MATRIX_JSON: `{"python-version": ["3.11","3.12","3.13","3.14","3.15"]}`
 
 #### Exact constraint (==3.11)
 
@@ -140,8 +140,8 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 
 #### Classifiers fallback
 
-- BUILD_PYTHON: `3.12` (based on fixture classifiers)
-- MATRIX_JSON: `{"python-version": ["3.10","3.11","3.12"]}`
+- BUILD_PYTHON: `3.13` (based on fixture classifiers)
+- MATRIX_JSON: `{"python-version": ["3.11","3.12","3.13"]}`
 
 ## Adding New Test Cases
 
@@ -161,7 +161,7 @@ To add a new test case:
    # TEST_NAME: Your test description
    # TEST_TYPE: requires-python|poetry-requires-python|classifiers|error-case
    # SHOULD_FAIL: true|false
-   # EXPECTED_MIN_VERSION: 3.10 (optional)
+   # EXPECTED_MIN_VERSION: 3.11 (optional)
    # EXPECTED_EXACT_VERSION: 3.11 (optional)
    # EXPECTED_VERSIONS_COUNT: 4 (optional)
    # DESCRIPTION: Detailed description of what this tests

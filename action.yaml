@@ -9,8 +9,8 @@ description: "Returns Python version(s) for build and JSON for matrix jobs"
 
 # Primary extraction method uses 'requires-python' from pyproject.toml
 # This brings alignment with actions/setup-python behavior
-# e.g. requires-python = ">=3.10" extracts supported versions 3.10, 3.11,
-# 3.12, 3.13, 3.14, 3.15
+# e.g. requires-python = ">=3.11" extracts supported versions 3.11, 3.12,
+# 3.13, 3.14, 3.15
 # Falls back to 'Programming Language :: Python ::' classifiers if
 # requires-python not found
 
@@ -53,7 +53,7 @@ outputs:
     value: "${{ steps.versions.outputs.build_python }}"
   matrix_json:
     description: "All Python versions supported by project as JSON string"
-    # Example: matrix_json = {"python-version": ["3.10", "3.11"]}
+    # Example: matrix_json = {"python-version": ["3.11", "3.12"]}
     value: "${{ steps.versions.outputs.matrix_json }}"
   supported_versions:
     description: "Space-separated list of all supported Python versions"
@@ -91,7 +91,7 @@ runs:
 
 
         # Internal list of supported Python versions (requires periodic update)
-        INTERNAL_SUPPORTED_VERSIONS="3.10 3.11 3.12 3.13 3.14 3.15"
+        INTERNAL_SUPPORTED_VERSIONS="3.11 3.12 3.13 3.14 3.15"
 
         # Setup and validate environment
         path_prefix="${INPUT_PATH_PREFIX}"
@@ -232,9 +232,9 @@ runs:
                 # Verify we got valid JSON array with expected structure
                 if [[ -n "$eol_data" ]] && echo "$eol_data" | jq -e 'type=="array" and length>0 and all(.[]; has("cycle"))' >/dev/null 2>&1; then
                     if [[ "$format" == "versions" ]]; then
-                        # Return processed version list (3.10+)
+                        # Return processed version list (3.11+)
                         printf '%s\n' "$eol_data" | \
-                          jq -r '.[] | select(.cycle | test("^(3\\.(1[0-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\\.[0-9]+)$")) | .cycle' | \
+                          jq -r '.[] | select(.cycle | test("^(3\\.(1[1-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\\.[0-9]+)$")) | .cycle' | \
                           tr '\n' ' ' | sed 's/ $//'
                     else
                         # Return raw JSON data

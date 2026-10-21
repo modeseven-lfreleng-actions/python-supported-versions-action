@@ -2,19 +2,19 @@
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 
 # TEST_METADATA:
-# TEST_NAME: Compatible release requires-python constraint (~=3.10.0)
+# TEST_NAME: Compatible release requires-python constraint (~=3.11.0)
 # TEST_TYPE: requires-python
 # SHOULD_FAIL: false
-# EXPECTED_MIN_VERSION: 3.10
-# EXPECTED_EXACT_VERSION: 3.10
+# EXPECTED_MIN_VERSION: 3.11
+# EXPECTED_EXACT_VERSION: 3.11
 # EXPECTED_VERSIONS_COUNT: 1
-# DESCRIPTION: Tests compatible release (~=) requires-python constraint is supported and resolves to 3.10 only
+# DESCRIPTION: Tests compatible release (~=) requires-python constraint is supported and resolves to 3.11 only
 
 [project]
 name = "test-unsupported-constraint"
 version = "1.0.0"
 description = "Test project with compatible release (~=) requires-python constraint"
-requires-python = "~=3.10.0"
+requires-python = "~=3.11.0"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 keywords = ["Python", "Tool"]
@@ -23,7 +23,7 @@ classifiers = [
   "Operating System :: Unix",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.10",
 ]
