@@ -213,7 +213,7 @@ build against the same baseline Python until it declares its own.
 For a Python project with the content below in its pyproject.toml file:
 
 ```toml
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 keywords = ["Python", "Tool"]
@@ -222,9 +222,9 @@ classifiers = [
   "Operating System :: Unix",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.10",
 ]
 ```
 
@@ -232,13 +232,13 @@ A workflow calling this action will produce the output below:
 
 ```console
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.10 3.11 3.12 3.13 3.14 3.15
-Found requires-python constraint (via fallback): >=3.10
+Supported versions: 3.11 3.12 3.13 3.14 3.15
+Found requires-python constraint (via fallback): >=3.11
 🔍 Processed requires-python constraint
-Python versions from constraints: 3.10 3.11 3.12 3.13 3.14 3.15
+Python versions from constraints: 3.11 3.12 3.13 3.14 3.15
 ✅ Build Python: 3.15
-✅ Supported versions: 3.10 3.11 3.12 3.13 3.14 3.15
-✅ Matrix JSON: {"python-version":["3.10","3.11","3.12","3.13","3.14","3.15"]}
+✅ Supported versions: 3.11 3.12 3.13 3.14 3.15
+✅ Matrix JSON: {"python-version":["3.11","3.12","3.13","3.14","3.15"]}
 ```
 
 ## Implementation Details
@@ -249,8 +249,8 @@ The action first attempts to extract the `requires-python` constraint from
 pyproject.toml:
 
 ```toml
-requires-python = ">=3.10"    # Supports 3.10, 3.11, 3.12, 3.13, 3.14, 3.15
-requires-python = ">3.9"      # Supports 3.10, 3.11, 3.12, 3.13, 3.14, 3.15
+requires-python = ">=3.11"    # Supports 3.11, 3.12, 3.13, 3.14, 3.15
+requires-python = ">3.10"     # Supports 3.11, 3.12, 3.13, 3.14, 3.15
 requires-python = "==3.11"    # Supports 3.11 specifically
 ```
 
@@ -294,9 +294,9 @@ the action falls back to parsing explicit version classifiers:
 
 ```toml
 classifiers = [
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.10",
 ]
 ```
 
@@ -342,14 +342,13 @@ actively maintained Python versions remain available.
 
 1. Fetches EOL data from `https://endoflife.date/api/python.json`
 2. Filters out versions that have reached end-of-life
-3. Returns Python 3.10+ versions that are still supported
+3. Returns Python 3.11+ versions that are still supported
 4. Provides real-time security compliance
 
 **Fallback Mechanism:**
 If network access is unavailable or the API request fails, the action falls
 back to a static definition of supported Python versions:
 
-- Python 3.10
 - Python 3.11
 - Python 3.12
 - Python 3.13
@@ -374,13 +373,13 @@ maintainability.
    are still supported
 
 2. **Version Filtering**: Parses the JSON response to extract:
-   - Python version cycles (e.g., "3.10", "3.11", "3.12")
+   - Python version cycles (e.g., "3.11", "3.12", "3.13")
    - End-of-life dates for each version
 
 3. **EOL Comparison**: Compares current date against EOL dates to filter
    out versions that are no longer supported
 
-4. **Version Selection**: Returns Python 3.10+ versions that are:
+4. **Version Selection**: Returns Python 3.11+ versions that are:
    - Not end-of-life (still receiving security updates)
    - Actively maintained by the Python core team
 
@@ -398,7 +397,7 @@ The action includes an `offline_mode` input for environments without internet ac
 When using offline mode:
 
 - Network requests do not occur
-- Uses internal static version list: 3.10, 3.11, 3.12, 3.13, 3.14, 3.15
+- Uses internal static version list: 3.11, 3.12, 3.13, 3.14, 3.15
 - EOL filtering does not occur
 - Perfect for air-gapped or restricted network environments
 
@@ -431,21 +430,21 @@ When dynamic fetching with EOL filtering is successful:
 
 ```text
 Retrieved supported Python versions from API service 🌍
-Supported versions: 3.10 3.11 3.12 3.13 3.14 3.15
+Supported versions: 3.11 3.12 3.13 3.14 3.15
 ```
 
 When using offline mode:
 
 ```text
 Using internal supported Python versions (offline mode) 📴
-Supported versions: 3.10 3.11 3.12 3.13 3.14 3.15
+Supported versions: 3.11 3.12 3.13 3.14 3.15
 ```
 
 When the endoflife.date API is unavailable:
 
 ```text
 Unable to retrieve supported Python versions, using internal list ⚠️
-Supported versions: 3.10 3.11 3.12 3.13 3.14 3.15
+Supported versions: 3.11 3.12 3.13 3.14 3.15
 ```
 
 ## Testing
@@ -459,10 +458,10 @@ To manually test the action behavior:
 ```bash
 # Test EOL API endpoint directly
 curl -s "https://endoflife.date/api/python.json" | \
-  jq -r '.[] | select(.cycle | test("^(3\\.(1[0-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\\.[0-9]+)$")) | .cycle'
+  jq -r '.[] | select(.cycle | test("^(3\\.(1[1-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\\.[0-9]+)$")) | .cycle'
 
 # Test with a sample pyproject.toml
-echo 'requires-python = ">=3.10"' > test_pyproject.toml
+echo 'requires-python = ">=3.11"' > test_pyproject.toml
 
 # Run the action locally (if using act or similar)
 act -j test
@@ -486,7 +485,7 @@ Current Python EOL schedule (as of 2026):
 
 - **Python 3.8**: EOL October 7, 2024 (excluded by default)
 - **Python 3.9**: EOL October 31, 2025 (excluded)
-- **Python 3.10**: EOL October 31, 2026 (included)
+- **Python 3.10**: EOL October 1, 2026 (excluded)
 - **Python 3.11**: EOL October 31, 2027 (included)
 - **Python 3.12**: EOL October 31, 2028 (included)
 - **Python 3.13**: EOL October 31, 2029 (included)

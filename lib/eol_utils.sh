@@ -13,7 +13,7 @@
 get_static_python_versions() {
   # Update periodically as new versions are released; keep in sync with
   # INTERNAL_SUPPORTED_VERSIONS in action.yaml (enforced by test_all.sh)
-  echo "3.10 3.11 3.12 3.13 3.14 3.15"
+  echo "3.11 3.12 3.13 3.14 3.15"
 }
 
 # Internal: check if a command exists in PATH.
@@ -34,9 +34,9 @@ _eol_curl_has_retry_all_errors() {
 # Behavior:
 # - Requires curl and jq. If either is missing, returns non-zero.
 # - Filters versions to include:
-#     - Python 3.10+ (3.10, 3.11, 3.12, ...)
+#     - Python 3.11+ (3.11, 3.12, 3.13, ...)
 #     - All 4.x+ minor series (future-proof)
-# - Sorts numerically by major.minor and prints as: "3.10 3.11 3.12 ..."
+# - Sorts numerically by major.minor and prints as: "3.11 3.12 3.13 ..."
 # - On any failure (network, invalid JSON, empty result), returns non-zero.
 fetch_eol_aware_versions() {
   local timeout="${1:-6}"
@@ -64,9 +64,9 @@ fetch_eol_aware_versions() {
   fi
 
   # Extract and filter cycles:
-  # - Include 3.10+ (3.10 through 3.99...)
+  # - Include 3.11+ (3.11 through 3.99...)
   # - Include 4.x+ (future major versions)
-  # Python 3.8 EOL 2024-10-07 and 3.9 EOL 2025-10-31; neither is
+  # Python 3.9 EOL 2025-10-31 and 3.10 EOL 2026-10-01; neither is
   # included in the modern matrix. Per-version EOL refinement is
   # delegated to check_version_eol() so consumers can still opt in
   # to warn/strip/fail handling for newly-EOL minors.
@@ -74,7 +74,7 @@ fetch_eol_aware_versions() {
   versions="$(
     printf '%s\n' "$json" |
       jq -r '.[] | .cycle' |
-      grep -E '^(3\.(1[0-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\.[0-9]+)$' |
+      grep -E '^(3\.(1[1-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\.[0-9]+)$' |
       sort -t. -k1,1n -k2,2n |
       tr '\n' ' ' | sed 's/ $//'
   )"
