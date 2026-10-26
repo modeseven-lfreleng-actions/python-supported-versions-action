@@ -2,18 +2,70 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 #
-# Shared EOL utilities for the Python Supported Versions Action tests.
-# Provides helpers to fetch supported Python versions from the public
-# endoflife.date API and a static fallback for offline/unavailable cases.
+# Supported Python range and endoflife.date helpers for the Python
+# Supported Versions Action. action.yaml and the test suite both source
+# this file, so the range below is the single definition of which Python
+# minor versions the action can emit.
 #
 # This library is designed to be sourced. It does not set shell options.
 
-# Return a static list of supported Python minor versions.
-# This is used as a fallback when network access or required tools are unavailable.
+# The supported range, inclusive at both ends. Every other list of
+# versions (the static fallback and the live endoflife.date filter) is
+# derived from this pair. Adding a new Python minor is a deliberate,
+# reviewed change to PYTHON_NEWEST_SUPPORTED; dropping one moves
+# PYTHON_OLDEST_SUPPORTED. Both must share the same major version.
+PYTHON_OLDEST_SUPPORTED="3.11"
+PYTHON_NEWEST_SUPPORTED="3.15"
+
+# Print the supported range as a space-separated list, ascending, for
+# example "3.11 3.12 3.13 3.14 3.15". This is the static fallback used
+# when network access is unavailable or offline mode is on.
+# Returns non-zero if the range pair is malformed.
 get_static_python_versions() {
-  # Update periodically as new versions are released; keep in sync with
-  # INTERNAL_SUPPORTED_VERSIONS in action.yaml (enforced by test_all.sh)
-  echo "3.11 3.12 3.13 3.14 3.15"
+  local oldest="$PYTHON_OLDEST_SUPPORTED"
+  local newest="$PYTHON_NEWEST_SUPPORTED"
+
+  if [[ ! "$oldest" =~ ^[0-9]+\.[0-9]+$ || ! "$newest" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: invalid supported Python range '$oldest'..'$newest'" >&2
+    return 1
+  fi
+
+  local major="${oldest%%.*}"
+  local first_minor=$((10#${oldest#*.}))
+  local last_minor=$((10#${newest#*.}))
+
+  if [[ "${newest%%.*}" != "$major" || $first_minor -gt $last_minor ]]; then
+    echo "Error: invalid supported Python range '$oldest'..'$newest'" >&2
+    return 1
+  fi
+
+  local minor versions=""
+  for ((minor = first_minor; minor <= last_minor; minor++)); do
+    versions+="${versions:+ }$major.$minor"
+  done
+  echo "$versions"
+}
+
+# Filter an endoflife.date Python response, read from stdin, to the
+# cycles inside the supported range. Major and minor compare
+# numerically, so 3.9 < 3.10 < 3.11. Prints the matching cycles as a
+# space-separated list, ascending. Returns non-zero when the input is
+# not valid JSON or no cycle falls inside the range.
+filter_supported_python_cycles() {
+  local versions
+  versions="$(
+    jq -r --arg lo "$PYTHON_OLDEST_SUPPORTED" --arg hi "$PYTHON_NEWEST_SUPPORTED" '
+      ($lo | split(".") | map(tonumber)) as $lo_key
+      | ($hi | split(".") | map(tonumber)) as $hi_key
+      | [ .[] | .cycle | strings | select(test("^[0-9]+\\.[0-9]+$"))
+          | {cycle: ., key: (split(".") | map(tonumber))}
+          | select(.key >= $lo_key and .key <= $hi_key) ]
+      | unique_by(.key) | map(.cycle) | join(" ")
+    ' 2>/dev/null
+  )" || return 1
+
+  [[ -n "$versions" ]] || return 1
+  echo "$versions"
 }
 
 # Internal: check if a command exists in PATH.
@@ -26,63 +78,51 @@ _eol_curl_has_retry_all_errors() {
   curl --help 2>/dev/null | grep -q -- '--retry-all-errors'
 }
 
-# Fetch supported Python versions from endoflife.date and print as a space-separated list.
+# Fetch the raw endoflife.date Python response and print it.
 # Arguments:
 #   $1 - timeout in seconds (default: 6)
 #   $2 - max retries (default: 2)
-#
-# Behavior:
-# - Requires curl and jq. If either is missing, returns non-zero.
-# - Filters versions to include:
-#     - Python 3.11+ (3.11, 3.12, 3.13, ...)
-#     - All 4.x+ minor series (future-proof)
-# - Sorts numerically by major.minor and prints as: "3.11 3.12 3.13 ..."
-# - On any failure (network, invalid JSON, empty result), returns non-zero.
-fetch_eol_aware_versions() {
+# Returns non-zero when curl or jq is missing, the request fails, or the
+# response is not a non-empty array of objects carrying a "cycle" key.
+fetch_python_eol_data() {
   local timeout="${1:-6}"
   local retries="${2:-2}"
 
-  # Ensure required tools are available
   if ! _eol_has_cmd curl || ! _eol_has_cmd jq; then
     return 1
   fi
 
-  local retry_flag=""
+  local -a retry_flag=()
   if _eol_curl_has_retry_all_errors; then
-    retry_flag="--retry-all-errors"
+    retry_flag=(--retry-all-errors)
   fi
 
-  # Fetch EOL data
+  # Bash before 4.4 treats an empty array as unset under 'set -u', and
+  # action.yaml runs with it, so expand the flag only when present.
   local json
-  if ! json="$(curl -s --max-time "$timeout" --retry "$retries" $retry_flag 'https://endoflife.date/api/python.json' 2>/dev/null)"; then
+  if ! json="$(curl -s --max-time "$timeout" --retry "$retries" ${retry_flag[@]+"${retry_flag[@]}"} \
+      'https://endoflife.date/api/python.json' 2>/dev/null)"; then
     return 1
   fi
 
-  # Validate shape (must be a non-empty array with "cycle" keys)
-  if [[ -z "$json" ]] || ! echo "$json" | jq -e 'type=="array" and length>0 and all(.[]; has("cycle"))' >/dev/null 2>&1; then
+  if [[ -z "$json" ]] || ! printf '%s\n' "$json" | \
+      jq -e 'type=="array" and length>0 and all(.[]; has("cycle"))' >/dev/null 2>&1; then
     return 1
   fi
 
-  # Extract and filter cycles:
-  # - Include 3.11+ (3.11 through 3.99...)
-  # - Include 4.x+ (future major versions)
-  # Python 3.9 EOL 2025-10-31 and 3.10 EOL 2026-10-01; neither is
-  # included in the modern matrix. Per-version EOL refinement is
-  # delegated to check_version_eol() so consumers can still opt in
-  # to warn/strip/fail handling for newly-EOL minors.
-  local versions
-  versions="$(
-    printf '%s\n' "$json" |
-      jq -r '.[] | .cycle' |
-      grep -E '^(3\.(1[1-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\.[0-9]+)$' |
-      sort -t. -k1,1n -k2,2n |
-      tr '\n' ' ' | sed 's/ $//'
-  )"
+  printf '%s\n' "$json"
+}
 
-  if [[ -n "$versions" ]]; then
-    echo "$versions"
-    return 0
-  fi
-
-  return 1
+# Fetch supported Python versions from endoflife.date, limited to the
+# supported range, and print them as a space-separated list.
+# Arguments as for fetch_python_eol_data. Returns non-zero on any
+# failure (network, invalid JSON, no cycle inside the range).
+#
+# Per-version EOL refinement is left to check_version_eol() in
+# action.yaml, so consumers can still opt in to warn/strip/fail handling
+# for a minor that reaches end of life while inside the range.
+fetch_eol_aware_versions() {
+  local json
+  json="$(fetch_python_eol_data "$@")" || return 1
+  printf '%s\n' "$json" | filter_supported_python_cycles
 }
