@@ -70,7 +70,11 @@ Supported optional expectations:
   - Auto-discovers all fixtures in the tests directory
   - Reads embedded test metadata from fixture files
   - Tests EOL-aware version filtering
-  - Tests network fallback mechanisms
+  - Tests network fallback mechanisms: the static list generated from
+    the supported range in `lib/eol_utils.sh` must be 3.11 to 3.15
+  - Tests the endoflife.date range filter offline, against a canned
+    response with cycles below (3.9, 3.10) and above (3.16, 4.0) the
+    supported range
   - Validates all scenarios with detailed reporting
   - Enforces metadata expectations when present (exact/min/count)
 
@@ -123,8 +127,12 @@ Tests are automatically run via `.github/workflows/testing.yaml` which includes:
 
 ### EOL-Aware Version Support
 
-- **Excluded**: Python 3.10 and earlier (End-of-Life)
+- **Excluded**: Python 3.10 and earlier (End-of-Life), and anything
+  newer than 3.15 until the supported range moves
 - **Included**: Python 3.11, 3.12, 3.13, 3.14, 3.15 (supported)
+
+The range is the `PYTHON_OLDEST_SUPPORTED`/`PYTHON_NEWEST_SUPPORTED`
+pair in `lib/eol_utils.sh`; the action and these tests both read it.
 
 ### Sample Outputs
 

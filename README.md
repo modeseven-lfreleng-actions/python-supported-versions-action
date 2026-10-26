@@ -334,20 +334,33 @@ self-contained, portable solution that doesn't require external dependencies.
 
 ### Supported Python Versions
 
-The action dynamically fetches supported Python versions from the
-endoflife.date API, filtering out end-of-life versions to ensure
-actively maintained Python versions remain available.
+The action supports a fixed range of Python minor versions, defined once
+as an oldest/newest pair at the top of `lib/eol_utils.sh`:
+
+```bash
+PYTHON_OLDEST_SUPPORTED="3.11"
+PYTHON_NEWEST_SUPPORTED="3.15"
+```
+
+The range is inclusive at both ends. The action never emits a version
+outside it, whatever endoflife.date lists. A new Python minor reaches
+callers through a reviewed change to `PYTHON_NEWEST_SUPPORTED`, not on
+the day endoflife.date adds its cycle.
+Dropping an old minor moves `PYTHON_OLDEST_SUPPORTED`. Both values must
+share the same major version.
 
 **Dynamic Fetching Process:**
 
 1. Fetches EOL data from `https://endoflife.date/api/python.json`
-2. Filters out versions that have reached end-of-life
-3. Returns Python 3.11+ versions that are still supported
-4. Provides real-time security compliance
+2. Keeps the cycles inside the supported range, comparing major and
+   minor numerically (so 3.9 < 3.10 < 3.11)
+3. Applies `eol_behaviour` to any cycle in that range that has reached
+   end-of-life
 
 **Fallback Mechanism:**
 If network access is unavailable or the API request fails, the action falls
-back to a static definition of supported Python versions:
+back to a static list generated from the same pair, every minor from the
+oldest to the newest:
 
 - Python 3.11
 - Python 3.12
@@ -379,7 +392,8 @@ maintainability.
 3. **EOL Comparison**: Compares current date against EOL dates to filter
    out versions that are no longer supported
 
-4. **Version Selection**: Returns Python 3.11+ versions that are:
+4. **Version Selection**: Returns versions inside the supported range
+   (see [Supported Python Versions](#supported-python-versions)) that are:
    - Not end-of-life (still receiving security updates)
    - Actively maintained by the Python core team
 
@@ -397,7 +411,8 @@ The action includes an `offline_mode` input for environments without internet ac
 When using offline mode:
 
 - Network requests do not occur
-- Uses internal static version list: 3.11, 3.12, 3.13, 3.14, 3.15
+- Uses the static list generated from the supported range: 3.11, 3.12,
+  3.13, 3.14, 3.15
 - EOL filtering does not occur
 - Perfect for air-gapped or restricted network environments
 

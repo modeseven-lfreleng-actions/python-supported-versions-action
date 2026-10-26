@@ -317,31 +317,65 @@ test_eol_awareness() {
     echo ""
 }
 
-# Function to test network fallback simulation
+# Function to test the static fallback generated from the supported range
 test_network_fallback() {
     log_section "Network Fallback Tests"
 
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
     log_test_start "Static Fallback Mechanism"
 
-    # The action embeds its own copy of the static list; it must match the
-    # library copy, or offline results would differ between the two paths
-    local static_versions action_versions
+    # action.yaml sources lib/eol_utils.sh, so this is the list the action
+    # falls back to when offline or when endoflife.date is unreachable
+    local static_versions
     static_versions=$(get_static_python_versions)
-    action_versions=$(sed -n 's/^[[:space:]]*INTERNAL_SUPPORTED_VERSIONS="\([^"]*\)".*/\1/p' \
-        "$ACTION_DIR/action.yaml" | head -1)
 
-    if [ -z "$static_versions" ] || ! echo "$static_versions" | grep -qw "3\.11"; then
-        log_error "Static fallback failed to provide valid versions"
+    if assert_equal "Static fallback" "3.11 3.12 3.13 3.14 3.15" "$static_versions"; then
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+    else
         FAILED_TESTS=$((FAILED_TESTS + 1))
-    elif [ "$static_versions" != "$action_versions" ]; then
-        log_error "Static version lists have drifted apart"
-        echo "   lib/eol_utils.sh: '$static_versions'"
-        echo "   action.yaml:      '$action_versions'"
+    fi
+
+    echo ""
+}
+
+# Function to test the live endoflife.date filter against a canned
+# response, so the range bounds are covered without network access
+test_eol_range_filter() {
+    log_section "EOL Range Filter Tests"
+
+    # Newest-first, as endoflife.date returns it, with cycles on both
+    # sides of the supported range
+    local canned_response='[
+        {"cycle": "4.0", "eol": "2035-10-01"},
+        {"cycle": "3.16", "eol": "2032-10-01"},
+        {"cycle": "3.15", "eol": "2031-10-31"},
+        {"cycle": "3.14", "eol": "2030-10-31"},
+        {"cycle": "3.13", "eol": "2029-10-31"},
+        {"cycle": "3.12", "eol": "2028-10-31"},
+        {"cycle": "3.11", "eol": "2027-10-31"},
+        {"cycle": "3.10", "eol": "2026-10-01"},
+        {"cycle": "3.9", "eol": "2025-10-31"},
+        {"cycle": "2.7", "eol": "2020-01-01"}
+    ]'
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+    log_test_start "Range filter keeps 3.11-3.15 only"
+    local filtered
+    filtered=$(printf '%s\n' "$canned_response" | filter_supported_python_cycles) || filtered=""
+    if assert_equal "Filtered cycles" "3.11 3.12 3.13 3.14 3.15" "$filtered"; then
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+    else
+        FAILED_TESTS=$((FAILED_TESTS + 1))
+    fi
+
+    TOTAL_TESTS=$((TOTAL_TESTS + 1))
+    log_test_start "Range filter rejects a response with no cycle in range"
+    if printf '%s\n' '[{"cycle": "3.10"}, {"cycle": "3.16"}, {"cycle": "4.0"}]' | \
+            filter_supported_python_cycles >/dev/null; then
+        log_error "Filter returned versions outside the supported range"
         FAILED_TESTS=$((FAILED_TESTS + 1))
     else
-        log_success "Static Fallback - Versions available when network unavailable"
-        echo "   Static versions: $static_versions"
+        log_success "Out-of-range cycles yield no versions"
         PASSED_TESTS=$((PASSED_TESTS + 1))
     fi
 
@@ -501,6 +535,9 @@ main() {
 
     # Test network fallback
     test_network_fallback
+
+    # Test the live filter offline, against a canned response
+    test_eol_range_filter
 
     # Final summary
     log_section "Test Results Summary"

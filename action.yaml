@@ -90,8 +90,14 @@ runs:
         DEFAULT_PYTHON_VERSION="${INPUT_DEFAULT_PYTHON_VERSION:-}"
 
 
-        # Internal list of supported Python versions (requires periodic update)
-        INTERNAL_SUPPORTED_VERSIONS="3.11 3.12 3.13 3.14 3.15"
+        # The supported Python range and the endoflife.date helpers live in
+        # lib/eol_utils.sh, which ships with the action. Source it
+        # unconditionally: a missing file must fail the step.
+        # shellcheck disable=SC1091
+        source "$GITHUB_ACTION_PATH/lib/eol_utils.sh"
+
+        # Static fallback, generated from the supported range
+        INTERNAL_SUPPORTED_VERSIONS="$(get_static_python_versions)"
 
         # Setup and validate environment
         path_prefix="${INPUT_PATH_PREFIX}"
@@ -222,33 +228,21 @@ runs:
                 return 0
             fi
 
-            # Fetch data with error checking
-            # Determine if curl supports --retry-all-errors; fallback if not
-            local curl_retry_flag=""
-            if curl --help 2>/dev/null | grep -q -- '--retry-all-errors'; then
-                curl_retry_flag="--retry-all-errors"
+            if ! eol_data=$(fetch_python_eol_data "$timeout" "$retries"); then
+                echo "Error: Failed to fetch valid EOL data from API" >&2
+                return 1
             fi
-            if eol_data=$(curl -s --max-time "$timeout" --retry "$retries" $curl_retry_flag 'https://endoflife.date/api/python.json' 2>/dev/null); then
-                # Verify we got valid JSON array with expected structure
-                if [[ -n "$eol_data" ]] && echo "$eol_data" | jq -e 'type=="array" and length>0 and all(.[]; has("cycle"))' >/dev/null 2>&1; then
-                    if [[ "$format" == "versions" ]]; then
-                        # Return processed version list (3.11+)
-                        printf '%s\n' "$eol_data" | \
-                          jq -r '.[] | select(.cycle | test("^(3\\.(1[1-9]|[2-9][0-9])|([4-9]|[1-9][0-9]+)\\.[0-9]+)$")) | .cycle' | \
-                          tr '\n' ' ' | sed 's/ $//'
-                    else
-                        # Return raw JSON data
-                        echo "$eol_data"
-                    fi
-                    return 0
-                else
-                    echo "Error: Invalid or empty EOL data received" >&2
+
+            if [[ "$format" == "versions" ]]; then
+                # Only cycles inside the supported range (lib/eol_utils.sh)
+                if ! printf '%s\n' "$eol_data" | filter_supported_python_cycles; then
+                    echo "Error: No supported Python versions in EOL data" >&2
                     return 1
                 fi
             else
-                echo "Error: Failed to fetch EOL data from API" >&2
-                return 1
+                printf '%s\n' "$eol_data"
             fi
+            return 0
         }
 
         # Function: Check if a version is EOL
